@@ -44,6 +44,13 @@ th, td { text-align:left; padding:7px 6px; border-bottom:1px solid var(--line); 
 td.num, th.num { text-align:right; white-space:nowrap; }
 td .btn { padding:4px 10px; }
 .muted { color:var(--muted); font-size:12px; }
+.drive-status { margin:0 0 6px; padding:8px 10px; border-radius:6px; background:#f3f1ea; font-size:13px; }
+.drive-status.on { background:#e6f4ea; color:#1e6b34; }
+.drive-status.err { background:#fdecea; color:#a1261b; }
+button.link { border:0; background:none; padding:0; font:inherit; font-size:12px; cursor:pointer; white-space:nowrap; }
+button.link.ok { color:#1e6b34; }
+button.link.warn { color:#a1261b; }
+button.link:hover { text-decoration:underline; }
 code { font-size:11.5px; word-break:break-all; }
 .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); display:flex; gap:12px; align-items:center; background:#222; color:#fff; padding:8px 14px; border-radius:6px; opacity:0; transition:opacity .2s; pointer-events:none; }
 .toast.on { opacity:1; pointer-events:auto; }

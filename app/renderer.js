@@ -196,12 +196,54 @@ function fileName(c, inv, me) {
   return `${c.company || 'Client'} Invoice - ${MONTHS[p.getMonth()]} ${p.getFullYear()} - ${me.name || 'Me'}.pdf`.replace(/[\\/:*?"<>|]/g, '');
 }
 
+const pdfBytes = entry => buildPdf({ me: entry.me, c: entry.c, inv: entry.inv, lines: entry.lines, pageSize: entry.pageSize }).output('arraybuffer');
+// Backup copies are prefixed with the invoice number so two invoices in the same month never clash.
+const backupName = entry => `${entry.inv.number} - ${fileName(entry.c, entry.inv, entry.me)}`.replace(/[\\/:*?"<>|]/g, '');
+
+// ---------- Google Drive backup ----------
+let driveState = { connected: false };
+
+// Uploads the invoice to Google Drive. Records the result on the history entry; returns true on success.
+async function backupPdf(entry, bytes) {
+  if (!driveState.connected || !store.driveUpload) return false;
+  const res = await store.driveUpload(bytes || pdfBytes(entry), backupName(entry));
+  if (res && !res.error) {
+    entry.backup = res.link; entry.backupError = null; entry.backedUpAt = new Date().toISOString();
+    return true;
+  }
+  entry.backup = null; entry.backupError = (res && res.error) || 'Upload failed';
+  if (/not connected|expired/i.test(entry.backupError)) refreshDriveStatus();
+  return false;
+}
+
+// Retries any invoices whose Drive upload failed earlier (e.g. while offline).
+let retrying = false;
+async function retryPendingBackups() {
+  if (retrying || !driveState.connected) return;
+  const pending = invoices.filter(h => !h.backup && h.backupError !== undefined);
+  if (!pending.length) return;
+  retrying = true;
+  let ok = 0;
+  for (const h of pending) if (await backupPdf(h)) ok++;
+  retrying = false;
+  persist('invoices'); renderHistory();
+  if (ok) toast(`Backed up ${ok} invoice${ok === 1 ? '' : 's'} to Google Drive`);
+}
+
 async function savePdf(entry) {
-  const doc = buildPdf({ me: entry.me, c: entry.c, inv: entry.inv, lines: entry.lines, pageSize: entry.pageSize });
-  const path = await store.savePdf(doc.output('arraybuffer'), fileName(entry.c, entry.inv, entry.me), settings.lastSaveDir);
+  const bytes = pdfBytes(entry);
+  const path = await store.savePdf(bytes, fileName(entry.c, entry.inv, entry.me), settings.lastSaveDir);
   if (path && window.api) {
     settings.lastSaveDir = path.replace(/[\\/][^\\/]*$/, ''); persist('settings');
-    toast('Saved ' + path.split(/[\\/]/).pop(), 'Open', () => store.open(path));
+    const name = path.split(/[\\/]/).pop();
+    if (!driveState.connected) {
+      entry.backupError = 'Google Drive not connected';
+      toast(`Saved ${name}. Not backed up: Google Drive isn't connected (My details).`, 'Open', () => store.open(path));
+    } else {
+      toast(`Saved ${name}. Uploading to Google Drive…`);
+      if (await backupPdf(entry, bytes)) toast(`Saved ${name} and backed up to Google Drive`, 'Open', () => store.open(path));
+      else toast(`Saved ${name}, but the Google Drive backup failed: ${entry.backupError}. It will retry automatically.`, 'Open', () => store.open(path));
+    }
   }
   return path;
 }
@@ -284,12 +326,61 @@ $('#change-data').onclick = async () => {
   if (await store.chooseDataDir()) location.reload();
 };
 
+// ---------- Google Drive settings ----------
+async function refreshDriveStatus(errorMsg) {
+  if (!store.driveStatus) { $('#drive-status').textContent = 'Google Drive backup is only available in the desktop app.'; $('#drive-connect').hidden = true; return; }
+  driveState = await store.driveStatus();
+  const s = $('#drive-status');
+  s.className = 'drive-status' + (errorMsg ? ' err' : driveState.connected ? ' on' : '');
+  s.textContent = errorMsg || (driveState.connected
+    ? `Connected${driveState.email ? ' as ' + driveState.email : ''}. Invoices are backed up to “Invoicer Backups”.`
+    : 'Not connected. Saved invoices are not being backed up.');
+  $('#drive-setup').hidden = driveState.connected;
+  if (!$('#drive-client-id').value) $('#drive-client-id').value = driveState.clientId || '';
+  $('#drive-secret').placeholder = driveState.hasSecret ? '(saved, leave blank to keep)' : '';
+  $('#drive-connect').hidden = driveState.connected;
+  $('#drive-open').hidden = $('#drive-disconnect').hidden = !driveState.connected;
+  const missing = invoices.filter(h => !h.backup).length;
+  $('#drive-retry').hidden = !driveState.connected || !missing;
+  $('#drive-retry').textContent = `Back up ${missing} missing invoice${missing === 1 ? '' : 's'}`;
+}
+$('#drive-connect').onclick = async () => {
+  const btn = $('#drive-connect');
+  btn.disabled = true; btn.textContent = 'Waiting for Google sign-in in your browser…';
+  const res = await store.driveConnect($('#drive-client-id').value, $('#drive-secret').value);
+  btn.disabled = false; btn.textContent = 'Connect Google Drive';
+  $('#drive-secret').value = '';
+  if (res && res.error) return refreshDriveStatus(res.error);
+  await refreshDriveStatus();
+  toast('Google Drive connected');
+  retryPendingBackups();
+};
+$('#drive-disconnect').onclick = async () => {
+  if (!confirm('Disconnect Google Drive? New invoices will not be backed up until you reconnect. Files already in Drive stay there.')) return;
+  await store.driveDisconnect(); refreshDriveStatus();
+};
+$('#drive-open').onclick = async () => { const r = await store.driveOpenFolder(); if (r && r.error) toast(r.error); };
+$('#drive-retry').onclick = async () => {
+  // Include invoices saved before Drive was connected.
+  invoices.forEach(h => { if (!h.backup && h.backupError === undefined) h.backupError = 'Not backed up yet'; });
+  $('#drive-retry').disabled = true;
+  await retryPendingBackups();
+  $('#drive-retry').disabled = false;
+  refreshDriveStatus();
+};
+
 // ---------- history tab ----------
 function renderHistory() {
   $('#hist-empty').style.display = invoices.length ? 'none' : '';
+  const driveCell = h => h.backup
+    ? `<button class="link ok" data-act="drive" data-id="${h.id}" title="Open in Google Drive">✓ Drive</button>`
+    : h.backupError !== undefined
+      ? `<button class="link warn" data-act="backup" data-id="${h.id}" title="${esc(h.backupError)}. Click to retry.">⚠ Retry</button>`
+      : '<span class="muted">–</span>';
   $('#hist').innerHTML = invoices.map(h =>
     `<tr><td>${esc(h.inv.number)}</td><td>${esc(h.c.company)}</td><td>${esc(h.inv.date)}</td>
      <td class="num">${esc(money(h.total, h.c.currency))}</td>
+     <td>${driveCell(h)}</td>
      <td class="num"><button class="btn" data-act="pdf" data-id="${h.id}">Save PDF</button>
      <button class="btn" data-act="copy" data-id="${h.id}" title="Start a new invoice with these lines">Copy</button>
      <button class="x" data-act="del" data-id="${h.id}" title="Remove from history">×</button></td></tr>`).join('');
@@ -297,8 +388,15 @@ function renderHistory() {
 $('#hist').onclick = async e => {
   const { act, id } = e.target.dataset;
   const h = invoices.find(x => x.id === id); if (!h) return;
-  if (act === 'pdf') await savePdf(h);
-  else if (act === 'copy') {
+  if (act === 'pdf') { if (await savePdf(h)) { persist('invoices'); renderHistory(); } }
+  else if (act === 'drive') store.openExternal(h.backup);
+  else if (act === 'backup') {
+    if (!driveState.connected) return toast('Connect Google Drive in My details first');
+    e.target.disabled = true; e.target.textContent = 'Uploading…';
+    const ok = await backupPdf(h);
+    persist('invoices'); renderHistory();
+    toast(ok ? `${h.inv.number} backed up to Google Drive` : `Backup failed: ${h.backupError}`);
+  } else if (act === 'copy') {
     draft = newDraft(client(h.c.id) ? h.c.id : undefined);
     draft.items = clone(h.inv.items).map(normItem);
     renderInvoice(); changed(); go('invoice');
@@ -344,6 +442,10 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
   if (store.version) $('#app-version').textContent = 'v' + await store.version();
   checkForUpdate();
   setInterval(checkForUpdate, 30 * 60 * 1000);
+  await refreshDriveStatus();
+  retryPendingBackups();
+  setInterval(retryPendingBackups, 10 * 60 * 1000);
+  window.addEventListener('online', retryPendingBackups);
 })();
 
 // ---------- updates ----------

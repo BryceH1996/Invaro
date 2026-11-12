@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
+const drive = require('./drive');
 
 app.setName('Invoicer');
 
@@ -117,6 +118,18 @@ ipcMain.handle('pdf:save', async (_e, bytes, defaultName, dir) => {
   if (canceled || !filePath) return null;
   fs.writeFileSync(filePath, Buffer.from(bytes));
   return filePath;
+});
+
+// ---------- Google Drive backups ----------
+// Errors are returned as { error } so the UI gets a clean message instead of an IPC stack.
+const safe = fn => async (...args) => { try { return await fn(...args); } catch (e) { return { error: e.message || String(e) }; } };
+ipcMain.handle('drive:status', () => drive.status());
+ipcMain.handle('drive:connect', safe((_e, clientId, secret) => drive.connect(clientId, secret)));
+ipcMain.handle('drive:disconnect', safe(() => drive.disconnect()));
+ipcMain.handle('drive:upload', safe((_e, bytes, name) => drive.upload(bytes, name)));
+ipcMain.handle('drive:openFolder', safe(async () => { await shell.openExternal(await drive.folderLink()); return true; }));
+ipcMain.handle('shell:external', (_e, url) => {
+  if (/^https:\/\/(drive|docs)\.google\.com\//.test(url)) return shell.openExternal(url);
 });
 
 // Switch data folder. If the chosen folder already has Invoicer data, use it;

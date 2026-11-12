@@ -104,6 +104,19 @@
       </div>
       <label>Page size</label>
       <select data-set="pageSize"><option value="letter">Letter</option><option value="a4">A4</option></select>
+      <h3>Google Drive backup</h3>
+      <p class="drive-status" id="drive-status">Not connected</p>
+      <div id="drive-setup">
+        <p class="muted">Every saved invoice is uploaded to an <b>Invoicer Backups</b> folder in your Google Drive. Invoicer can only see the files it creates there. Paste the OAuth client ID and secret from your Google Cloud project, then click Connect.</p>
+        <label>Client ID</label><input id="drive-client-id" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off" spellcheck="false">
+        <label>Client secret</label><input id="drive-secret" type="password" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="drive-connect">Connect Google Drive</button>
+        <button class="btn" id="drive-open" hidden>Open backup folder</button>
+        <button class="btn" id="drive-retry" hidden>Back up missing invoices</button>
+        <button class="btn danger" id="drive-disconnect" hidden>Disconnect</button>
+      </div>
       <h3>Data</h3>
       <p class="muted">Clients, settings and invoice history are saved as JSON files in:<br><code id="data-dir"></code></p>
       <div class="actions">
@@ -117,7 +130,7 @@
     <section data-tab="history">
       <h2>History</h2>
       <table>
-        <thead><tr><th>No.</th><th>Client</th><th>Date</th><th class="num">Total</th><th></th></tr></thead>
+        <thead><tr><th>No.</th><th>Client</th><th>Date</th><th class="num">Total</th><th>Backup</th><th></th></tr></thead>
         <tbody id="hist"></tbody>
       </table>
       <p class="muted" id="hist-empty">No invoices saved yet.</p>

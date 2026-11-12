@@ -153,6 +153,34 @@ ipcMain.handle('shell:clientFolder', (_e, client) => {
   return shell.openPath(dir);
 });
 
+// ---------- company logo ----------
+// The chosen image is copied into the data folder as logo.<ext>, so it moves with your data.
+const LOGO_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
+const logoData = name => {
+  const p = name && path.join(DATA_DIR, path.basename(name));
+  if (!p || !fs.existsSync(p)) return null;
+  return `data:${LOGO_TYPES[path.extname(p).toLowerCase()] || 'image/png'};base64,${fs.readFileSync(p).toString('base64')}`;
+};
+const removeLogos = () => fs.readdirSync(DATA_DIR).filter(f => /^logo\.[a-z]+$/i.test(f)).forEach(f => fs.rmSync(path.join(DATA_DIR, f), { force: true }));
+ipcMain.handle('logo:load', (_e, name) => logoData(name));
+ipcMain.handle('logo:choose', safe(async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: 'Choose your company logo',
+    filters: [{ name: 'Images', extensions: Object.keys(LOGO_TYPES).map(e => e.slice(1)) }],
+    properties: ['openFile'],
+  });
+  if (canceled || !filePaths[0]) return null;
+  const ext = path.extname(filePaths[0]).toLowerCase();
+  if (!LOGO_TYPES[ext]) throw new Error('Choose a PNG, JPG, WebP or SVG image.');
+  if (fs.statSync(filePaths[0]).size > 10 * 1024 * 1024) throw new Error('That image is over 10 MB. Choose a smaller one.');
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  removeLogos();
+  const name = 'logo' + ext;
+  fs.copyFileSync(filePaths[0], path.join(DATA_DIR, name));
+  return { name, data: logoData(name) };
+}));
+ipcMain.handle('logo:remove', () => { removeLogos(); return true; });
+
 // ---------- Google Drive backups ----------
 // Google Drive for desktop shows your Drive as a "My Drive" folder (usually G:\My Drive,
 // or %USERPROFILE%\My Drive in mirror mode) and syncs it online. Invoicer copies every
@@ -227,7 +255,8 @@ ipcMain.handle('data:chooseDir', async () => {
     if (response !== 0) return null;
   } else {
     fs.mkdirSync(target, { recursive: true });
-    for (const f of Object.values(FILES)) {
+    const logos = fs.existsSync(DATA_DIR) ? fs.readdirSync(DATA_DIR).filter(f => /^logo\.[a-z]+$/i.test(f)) : [];
+    for (const f of [...Object.values(FILES), ...logos]) {
       const src = path.join(DATA_DIR, f);
       if (fs.existsSync(src)) fs.copyFileSync(src, path.join(target, f));
     }

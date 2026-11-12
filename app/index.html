@@ -80,6 +80,10 @@
           <div><label>Day off reduction</label><input data-cl="dayOffRate" type="number" step="0.01" min="0" placeholder="= daily rate"></div>
         </div>
         <p class="muted">Rates are in the client's currency. Day off reduction is subtracted per day off; leave it blank to use the daily rate.</p>
+        <div class="row">
+          <div><label>Client's VAT number (optional)</label><input data-cl="vatNumber"></div>
+          <div><label>Tax rate to charge (%)</label><input data-cl="taxRate" type="number" step="0.01" min="0" placeholder="0 = no tax line"></div>
+        </div>
         <h3>Invoice reminder</h3>
         <p class="muted"><span id="cl-reminder"></span> <button class="link" id="cl-reminder-edit">Change in Notifications</button></p>
         <h3>Default line items</h3>
@@ -94,21 +98,49 @@
     <!-- ME -->
     <section data-tab="me">
       <h2>My details</h2>
-      <label>Name</label><input data-me="name">
+      <div class="row">
+        <div><label>Your name</label><input data-me="name"></div>
+        <div><label>Company name (optional)</label><input data-me="company" placeholder="Leave blank to invoice as yourself"></div>
+      </div>
       <label>Address (one line per row)</label><textarea data-me="address" rows="3"></textarea>
       <div class="row">
         <div><label>Email</label><input data-me="email"></div>
         <div><label>Phone</label><input data-me="phone"></div>
       </div>
+      <div class="row three">
+        <div><label>VAT number</label><input data-me="vatNumber"></div>
+        <div><label>Tax number</label><input data-me="taxNumber"></div>
+        <div><label>Company reg. number</label><input data-me="regNumber"></div>
+      </div>
+      <p class="muted">Only the numbers you fill in are printed on your invoices.</p>
       <label>Payment details / notes (printed under the total, optional)</label>
       <textarea data-me="notes" rows="4" placeholder="Bank: ...&#10;Account: ..."></textarea>
+
+      <h3>Invoice design</h3>
+      <label>Template</label>
+      <div class="templates" id="design-templates"></div>
+      <label>Colour</label>
+      <div class="swatches" id="design-swatches"></div>
+      <label>Logo</label>
+      <div class="logo-row">
+        <div class="logo-box" id="logo-box"><span class="muted">No logo</span></div>
+        <div class="actions">
+          <button class="btn" id="logo-choose">Choose logo…</button>
+          <button class="btn" id="logo-remove" hidden>Remove</button>
+        </div>
+      </div>
+      <p class="muted">PNG, JPG, WebP or SVG. A logo with a transparent background looks best on every template.</p>
       <h3>Invoice settings</h3>
       <div class="row">
         <div><label>Invoice number prefix</label><input data-set="prefix"></div>
         <div><label>Next invoice number</label><input data-set="nextNumber" type="number"></div>
       </div>
-      <label>Page size</label>
-      <select data-set="pageSize"><option value="letter">Letter</option><option value="a4">A4</option></select>
+      <div class="row">
+        <div><label>Page size</label>
+          <select data-set="pageSize"><option value="letter">Letter</option><option value="a4">A4</option></select></div>
+        <div><label>Name for tax on invoices</label>
+          <select data-set="taxLabel"><option value="VAT">VAT</option><option value="Tax">Tax</option><option value="GST">GST</option><option value="Sales tax">Sales tax</option></select></div>
+      </div>
       <h3>Google Drive backup</h3>
       <p class="drive-status" id="drive-status">Checking…</p>
       <p class="muted">Every saved invoice is copied into <b>My Drive\Invoicer Backups</b>, and Google Drive for desktop uploads it to your Google Drive online. Invoicer finds your My Drive folder automatically.</p>

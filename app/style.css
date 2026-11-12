@@ -9,6 +9,18 @@ nav button.active, nav button:hover { opacity:1; background:rgba(255,255,255,.18
 header .version { margin-left:auto; font-size:12px; opacity:.75; }
 .update-bar { display:flex; align-items:center; gap:12px; padding:8px 20px; background:#fff4cc; border-bottom:1px solid #e8d48a; flex:none; }
 .update-bar[hidden] { display:none; }
+.templates { display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:6px; }
+.templates button { background:#fff; border:2px solid #ddd8c8; border-radius:8px; padding:8px; cursor:pointer; font:inherit; text-align:center; }
+.templates button.on { border-color:#bf9000; box-shadow:0 0 0 2px rgba(191,144,0,.18); }
+.templates svg { display:block; width:100%; height:auto; margin-bottom:6px; border-radius:4px; }
+.swatches { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:6px; }
+.swatches button { width:28px; height:28px; border-radius:50%; border:2px solid #fff; box-shadow:0 0 0 1px #ccc; cursor:pointer; padding:0; }
+.swatches button.on { box-shadow:0 0 0 2px #222; }
+.swatches label { display:flex; align-items:center; gap:6px; margin:0 0 0 6px; font-size:13px; cursor:pointer; }
+.swatches input[type=color] { width:34px; height:28px; padding:0; border:1px solid #ccc; border-radius:6px; background:#fff; cursor:pointer; }
+.logo-row { display:flex; align-items:center; gap:14px; }
+.logo-box { width:160px; height:64px; border:1px dashed #ccc; border-radius:6px; display:flex; align-items:center; justify-content:center; background:#fff; overflow:hidden; }
+.logo-box img { max-width:150px; max-height:56px; }
 table.reminders select { width:100%; min-width:150px; }
 table.reminders td { vertical-align:middle; }
 table.reminders td:first-child, table.reminders td:last-child { white-space:nowrap; }

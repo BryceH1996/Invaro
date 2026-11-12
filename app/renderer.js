@@ -62,10 +62,94 @@ function lineDetail(it, c) {
   return '';
 }
 // Lines as they appear on the PDF (zero-value lines dropped).
+// qty and price feed the templates with Qty / Price columns (days off show a negative price).
 function priced(items, c) {
-  return items.map(it => ({ desc: it.desc, detail: lineDetail(it, c), amount: lineAmount(it, c) }))
-    .filter(l => l.amount !== 0);
+  return items.map(it => {
+    const amount = lineAmount(it, c);
+    const fixed = it.kind === 'fixed';
+    const price = fixed ? amount : (it.kind === 'daysoff' ? -1 : 1) * rateFor(it.kind, c);
+    return { desc: it.desc, detail: lineDetail(it, c), qty: fixed ? 1 : num(it.qty), price, amount };
+  }).filter(l => l.amount !== 0);
 }
+
+// ---------- invoice design (template, colour, logo) ----------
+let logo = null; // { data, w, h } with data a PNG data URL, scaled down for the PDF
+const pdfOptions = (entry) => ({
+  me: entry.me, c: entry.c, inv: entry.inv, lines: entry.lines, pageSize: entry.pageSize,
+  design: entry.design, logo, taxLabel: entry.taxLabel || settings.taxLabel,
+});
+// Turns any image the browser can show into a PNG no bigger than 800px, for jsPDF.
+function loadLogoImage(dataUrl) {
+  return new Promise(resolve => {
+    if (!dataUrl) return resolve(null);
+    const img = new Image();
+    img.onload = () => {
+      const s = Math.min(1, 800 / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+      const w = Math.max(1, Math.round((img.naturalWidth || 300) * s)), h = Math.max(1, Math.round((img.naturalHeight || 100) * s));
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve({ data: cv.toDataURL('image/png'), w, h, src: dataUrl });
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+function designNow() { return resolveDesign(settings.design); }
+// Small sketches of each template for the picker, drawn in the chosen colour.
+function templateSketch(id, color) {
+  const lt = 'rgba(0,0,0,.08)';
+  const body = {
+    classic: `<rect x="8" y="10" width="44" height="22" fill="${color}" opacity=".35"/><rect x="52" y="10" width="40" height="22" fill="${color}"/>
+      <rect x="8" y="44" width="84" height="6" fill="${color}"/><rect x="8" y="56" width="84" height="5" fill="${lt}"/><rect x="8" y="66" width="84" height="5" fill="${color}" opacity=".3"/>`,
+    wave: `<path d="M0 0H100V22C70 30 40 24 0 36Z" fill="${color}"/><rect x="8" y="44" width="84" height="6" fill="${color}"/>
+      <rect x="8" y="50" width="84" height="18" fill="none" stroke="#bbb" stroke-width=".8"/><rect x="54" y="72" width="38" height="6" fill="${color}"/>`,
+    minimal: `<rect x="8" y="9" width="30" height="8" fill="#222"/><rect x="8" y="24" width="20" height="10" fill="${lt}"/><rect x="38" y="24" width="20" height="10" fill="${lt}"/>
+      <rect x="8" y="44" width="84" height="7" fill="${color}" opacity=".25"/><rect x="8" y="57" width="84" height="1" fill="#ccc"/><rect x="60" y="70" width="32" height="5" fill="${color}"/>`,
+  }[id];
+  return `<svg viewBox="0 0 100 84"><rect width="100" height="84" fill="#fff"/>${body}</svg>`;
+}
+function renderDesign() {
+  const d = designNow();
+  $('#design-templates').innerHTML = Object.entries(TEMPLATES).map(([id, t]) =>
+    `<button data-template="${id}" class="${id === d.template ? 'on' : ''}" title="${t.name}">${templateSketch(id, (settings.design?.colors?.[id]) || t.color)}${t.name}</button>`).join('');
+  const swatches = [...new Set([TEMPLATES[d.template].color, ...SWATCHES])];
+  $('#design-swatches').innerHTML = swatches.map(c =>
+    `<button data-color="${c}" style="background:${c}" class="${c === d.color.toLowerCase() ? 'on' : ''}" title="${c}"></button>`).join('')
+    + `<label title="Pick any colour"><input type="color" id="design-custom" value="${d.color}"> Custom</label>`;
+  $('#logo-box').innerHTML = logo ? `<img src="${logo.data}" alt="Your logo">` : '<span class="muted">No logo</span>';
+  $('#logo-remove').hidden = !logo;
+}
+function setDesign(patch) {
+  const d = designNow();
+  const next = { template: d.template, colors: { ...(settings.design?.colors || {}) } };
+  if (patch.template) next.template = patch.template;
+  if (patch.color) next.colors[next.template] = patch.color;
+  settings.design = next;
+  persist('settings'); renderDesign(); refreshPreview(0);
+}
+$('#design-templates').onclick = e => { const b = e.target.closest('[data-template]'); if (b) setDesign({ template: b.dataset.template }); };
+$('#design-swatches').onclick = e => { const b = e.target.closest('[data-color]'); if (b) setDesign({ color: b.dataset.color }); };
+$('#design-swatches').addEventListener('input', e => {
+  if (e.target.id !== 'design-custom') return;
+  const d = designNow();
+  settings.design = { template: d.template, colors: { ...(settings.design?.colors || {}), [d.template]: e.target.value } };
+  persist('settings'); refreshPreview(); // live while dragging; swatches re-render on change
+});
+$('#design-swatches').addEventListener('change', e => { if (e.target.id === 'design-custom') renderDesign(); });
+$('#logo-choose').onclick = async () => {
+  if (!store.chooseLogo) return toast('Logos are only available in the desktop app.');
+  const r = await store.chooseLogo();
+  if (!r) return;
+  if (r.error) return toast(r.error);
+  const img = await loadLogoImage(r.data);
+  if (!img) { await store.removeLogo(); return toast("Couldn't read that image. Try a PNG or JPG."); }
+  logo = img; settings.logo = r.name; persist('settings');
+  renderDesign(); refreshPreview(0);
+};
+$('#logo-remove').onclick = async () => {
+  await store.removeLogo(); logo = null; settings.logo = ''; persist('settings');
+  renderDesign(); refreshPreview(0);
+};
 const normItem = it => ({ kind: KINDS[it.kind] ? it.kind : 'fixed', desc: it.desc || '', qty: it.qty ?? 1, amount: it.amount ?? 0 });
 
 // ---------- drafts ----------
@@ -128,7 +212,7 @@ function refreshPreview(delay = 250) {
   previewTimer = setTimeout(() => {
     const c = client(draft.clientId);
     if (!c) { $('#preview').removeAttribute('src'); return; }
-    const doc = buildPdf({ me: settings.me || {}, c, inv: draft, lines: priced(draft.items, c), pageSize: settings.pageSize });
+    const doc = buildPdf(pdfOptions({ me: settings.me || {}, c, inv: draft, lines: priced(draft.items, c), pageSize: settings.pageSize, design: settings.design }));
     const url = doc.output('bloburl');
     $('#preview').src = `${url}#${previewView()}&toolbar=0&navpanes=0`;
     if (previewUrl) setTimeout(URL.revokeObjectURL.bind(URL, previewUrl), 2000);
@@ -197,7 +281,8 @@ function renderItems() {
 }
 function updateTotal() {
   const c = client(draft.clientId) || {};
-  $('#inv-total').textContent = money(priced(draft.items, c).reduce((s, l) => s + l.amount, 0), c.currency);
+  const t = invoiceTotals(priced(draft.items, c), c);
+  $('#inv-total').textContent = money(t.total, c.currency) + (t.tax ? ` (incl. ${settings.taxLabel || 'VAT'} ${money(t.tax, c.currency)})` : '');
 }
 function changed() { settings.draft = draft; persist('settings'); updateTotal(); refreshPreview(); }
 
@@ -231,7 +316,8 @@ function fileName(c, inv, me) {
   return `${c.company || 'Client'} Invoice - ${MONTHS[p.getMonth()]} ${p.getFullYear()} - ${me.name || 'Me'}.pdf`.replace(/[\\/:*?"<>|]/g, '');
 }
 
-const pdfBytes = entry => buildPdf({ me: entry.me, c: entry.c, inv: entry.inv, lines: entry.lines, pageSize: entry.pageSize }).output('arraybuffer');
+// History entries keep the design they were saved with (older ones have none, so they stay Classic).
+const pdfBytes = entry => buildPdf(pdfOptions(entry)).output('arraybuffer');
 // Backup copies are prefixed with the invoice number so two invoices in the same month never clash.
 const backupName = entry => `${entry.inv.number} - ${fileName(entry.c, entry.inv, entry.me)}`.replace(/[\\/:*?"<>|]/g, '');
 
@@ -290,8 +376,10 @@ $('#download').onclick = async () => {
   const entry = {
     id: uid(), savedAt: new Date().toISOString(), pageSize: settings.pageSize,
     inv: clone(draft), c: clone(c), me: clone(settings.me || {}), lines: priced(draft.items, c),
+    design: clone(designNow()), taxLabel: settings.taxLabel || 'VAT',
   };
-  entry.total = round2(entry.lines.reduce((s, l) => s + l.amount, 0));
+  const t = invoiceTotals(entry.lines, entry.c);
+  entry.total = t.total; entry.subtotal = t.subtotal; entry.tax = t.tax;
   // Re-saving an invoice number that's already in History overwrites that same file.
   const previous = invoices.find(h => h.inv.number === entry.inv.number);
   entry.file = previous ? previous.file : '';
@@ -550,6 +638,9 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
   });
   if (migrated) await store.save('clients', clients);
   settings.nextNumber = nextNumberValue();
+  settings.taxLabel ||= 'VAT';
+  if (settings.logo && store.loadLogo) logo = await loadLogoImage(await store.loadLogo(settings.logo));
+  renderDesign();
   draft = settings.draft && client(settings.draft.clientId)
     ? { ...settings.draft, items: settings.draft.items.map(normItem) }
     : newDraft();

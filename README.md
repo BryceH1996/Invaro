@@ -18,6 +18,8 @@ Invoicer keeps itself up to date after that. To remove it, go to **Settings → 
 
 - **Clients:** each client keeps its address, payment terms, currency (GBP, USD, EUR or ZAR), hourly rate, daily rate and day-off reduction.
 - **Pricing:** add lines as days, hours, days off or fixed amounts, and the total is worked out from the client's rates.
+- **Your look:** choose from three templates (Classic, Wave and Minimal) in any colour, and add your company logo.
+- **Business details:** your company name, VAT, tax and registration numbers, plus each client's VAT number. Set a tax rate for a client to add a VAT line to their invoices.
 - **Live preview:** the PDF updates as you type. Zoom with − / +, or Ctrl + / Ctrl − / Ctrl 0.
 - **A folder per client:** **Save invoice** puts the PDF straight into that client's folder, e.g. `Documents\Invoicer\Northwind Design Co\Northwind Design Co. Invoice - November 2026 - Alex Morgan.pdf`.
 - **Numbering:** invoice numbers carry on from the last one you saved.
@@ -52,6 +54,7 @@ Everything is in `Documents\Invoicer` (**My details → Data** shows the exact f
 | `clients.json` | Your clients and their rates |
 | `settings.json` | Your details and invoice settings |
 | `invoices.json` | The history of saved invoices |
+| `logo.png` (or `.jpg`, …) | Your logo, if you've added one |
 | `<Client>\*.pdf` | Your invoices, one folder per client |
 
 Invoicer's app folder, `%APPDATA%\Invoicer`, also remembers which data folder you use and when each reminder last showed. To back everything up, or to use the same data on another PC, move the data folder into OneDrive or similar.

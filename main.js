@@ -1,12 +1,15 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu, nativeImage, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 app.setName('Invoicer');
 // Tests run with their own profile so they never clash with the installed app.
 if (process.env.INVOICER_PROFILE) app.setPath('userData', process.env.INVOICER_PROFILE);
-// One copy at a time: starting Invoicer again (e.g. while it's in the tray) shows the open window.
+// Started by Windows Task Scheduler to check reminders: no window unless a notification is clicked.
+// (--hidden came from 1.6.0's start-with-Windows entry, which is removed on start.)
+const CHECK_ONLY = process.argv.includes('--check-reminders') || process.argv.includes('--hidden');
+// One copy at a time: starting Invoicer again shows the open window (or just runs the check).
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 if (app.isPackaged) app.setAppUserModelId('local.invoicer.app'); // needed for Windows notifications
 const ICON = path.join(__dirname, 'build', 'icon.png');
@@ -99,22 +102,14 @@ function createWindow(show) {
     },
   });
   win.loadFile(path.join(__dirname, 'app', 'index.html'));
-  // With reminders on, closing the window keeps Invoicer running in the tray.
-  win.on('close', e => {
-    if (quitting || !remindersOn()) return;
-    e.preventDefault();
-    win.hide();
-    const state = readReminderState();
-    if (!state.trayHintShown && tray) {
-      tray.displayBalloon({ title: 'Invoicer is still running', content: "It'll remind you when it's time to invoice. Right-click the tray icon to quit.", iconType: 'info' });
-      writeReminderState({ ...state, trayHintShown: true });
-    }
-  });
+  win.on('closed', () => { win = null; });
+  return win;
 }
 function showWindow() {
-  if (!win) return;
+  if (!win) return createWindow(true);
   if (win.isMinimized()) win.restore();
   win.show(); win.focus();
+  return win;
 }
 
 ipcMain.handle('data:load', () => ({
@@ -239,6 +234,7 @@ ipcMain.handle('data:chooseDir', async () => {
   }
   writeConfig({ ...readConfig(), dataDir: target });
   DATA_DIR = target;
+  syncReminderTask(); // the other folder's clients may have different reminders
   return target;
 });
 
@@ -316,66 +312,136 @@ function dueReminders(at = now()) {
   });
 }
 
-const shown = []; // keep notifications referenced so their click handlers still work
+// Clicking a notification opens the invoice for that client. If the window had to be
+// created first, the UI picks the client up with reminders:takeOpen once it has loaded.
+let pendingOpen = null;
+function openReminder(id) {
+  const w = showWindow();
+  if (w.webContents.isLoading()) pendingOpen = id;
+  else w.webContents.send('reminder:open', id);
+}
+
+const shown = new Set(); // keep notifications referenced so their click handlers still work
 function notify(r) {
   if (process.env.INVOICER_NOTIFY_LOG) fs.appendFileSync(process.env.INVOICER_NOTIFY_LOG, JSON.stringify(r) + '\n');
   if (!Notification.isSupported()) return;
-  const n = new Notification({ title: `Time to invoice ${r.company}`, body: 'Click to start the invoice.', icon: ICON });
-  n.on('click', () => { showWindow(); win && win.webContents.send('reminder:open', r.id); });
-  n.on('close', () => shown.splice(shown.indexOf(n), 1));
-  shown.push(n);
+  // timeoutType 'never' keeps it on screen until you click or dismiss it.
+  const n = new Notification({ title: `Time to invoice ${r.company}`, body: 'Click to start the invoice.', icon: ICON, timeoutType: 'never' });
+  const done = () => { shown.delete(n); quitIfIdle(); };
+  n.on('click', () => { openReminder(r.id); done(); });
+  n.on('close', done);
+  shown.add(n);
   n.show();
 }
-// Shows each due reminder at most once a day, from 9am.
+// Shows each due reminder at most once a day, from 9am. Returns how many were shown.
 function checkReminders() {
   const at = now();
   const due = dueReminders(at);
   if (win) win.webContents.send('reminders', due);
-  if (at.getHours() < 9) return;
+  if (at.getHours() < 9) return 0;
   const state = readReminderState(), notified = state.notified || {};
   const fresh = due.filter(r => notified[r.id] !== ymd(at));
-  if (!fresh.length) return;
+  if (!fresh.length) return 0;
   fresh.forEach(r => { notified[r.id] = ymd(at); notify(r); });
   writeReminderState({ ...readReminderState(), notified });
+  return fresh.length;
 }
-// Called whenever clients or invoices are saved: refresh the in-app bars and start-with-Windows.
+// A check-only run quits once there's no window and no notification waiting to be clicked.
+function quitIfIdle() { if (CHECK_ONLY && !win && !shown.size) app.quit(); }
+
+// ---------- Windows Task Scheduler ----------
+// While any client has a reminder, a scheduled task runs "Invoicer --check-reminders" every
+// day at 9am (or as soon as the PC is on and you're signed in, if it was off at 9). With no
+// reminders left, the task is deleted. The uninstaller deletes it too (build/installer.nsh).
+const TASK = process.env.INVOICER_TASK_NAME || 'Invoicer reminders';
+const taskEnabled = () => app.isPackaged || !!process.env.INVOICER_TASK_NAME;
+const schtasks = args => new Promise(resolve =>
+  execFile('schtasks.exe', args, { windowsHide: true }, (err, stdout, stderr) => resolve({ ok: !err, out: String(stdout || stderr || (err && err.message) || '') })));
+const xmlEsc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function taskXml() {
+  // In development the exe is electron.exe, which needs the app folder as its first argument.
+  const args = (app.isPackaged ? '' : `"${app.getAppPath()}" `) + '--check-reminders';
+  return `<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>Shows Invoicer's invoice reminders. Created by Invoicer and deleted when no client has a reminder.</Description></RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger><StartBoundary>2026-01-01T09:00:00</StartBoundary><ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger>
+  </Triggers>
+  <Principals><Principal id="Author"><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <ExecutionTimeLimit>PT12H</ExecutionTimeLimit>
+    <Enabled>true</Enabled>
+  </Settings>
+  <Actions Context="Author"><Exec><Command>${xmlEsc(process.execPath)}</Command><Arguments>${xmlEsc(args)}</Arguments></Exec></Actions>
+</Task>`;
+}
+let taskSync = Promise.resolve();
+// Creates or deletes the task to match the clients. `verify` also asks Windows whether the task
+// exists (on start-up, in case it was deleted by hand); otherwise the last result is trusted.
+function syncReminderTask(verify) {
+  if (!taskEnabled()) return taskSync;
+  taskSync = taskSync.then(async () => {
+    const want = remindersOn() ? process.execPath : null;
+    let have = readReminderState().task || null;
+    if (verify) {
+      const q = await schtasks(['/query', '/tn', TASK]);
+      if (!q.ok) have = null;
+      else if (!have) have = 'unknown'; // exists, but not one we recorded: rewrite or delete it
+    }
+    if (want === have) return;
+    if (want) {
+      const xmlFile = path.join(os.tmpdir(), `invoicer-task-${process.pid}.xml`);
+      fs.writeFileSync(xmlFile, Buffer.from('﻿' + taskXml(), 'utf16le'));
+      const r = await schtasks(['/create', '/tn', TASK, '/xml', xmlFile, '/f']);
+      fs.rmSync(xmlFile, { force: true });
+      if (!r.ok) { console.error('Could not create the reminder task:', r.out); return; }
+    } else {
+      const r = await schtasks(['/delete', '/tn', TASK, '/f']);
+      if (!r.ok) { console.error('Could not delete the reminder task:', r.out); return; }
+    }
+    writeReminderState({ ...readReminderState(), task: want });
+  });
+  return taskSync;
+}
+
+// Called whenever clients or invoices are saved: refresh the in-app bars and the scheduled task.
 function remindersChanged() {
   if (win) win.webContents.send('reminders', dueReminders());
-  if (app.isPackaged) {
-    const on = remindersOn();
-    if (app.getLoginItemSettings().openAtLogin !== on) app.setLoginItemSettings({ openAtLogin: on, args: ['--hidden'] });
-  }
+  syncReminderTask();
 }
 ipcMain.handle('reminders:due', () => dueReminders());
+ipcMain.handle('reminders:takeOpen', () => { const id = pendingOpen; pendingOpen = null; return id; });
 ipcMain.handle('reminders:skip', (_e, id) => {
   const r = dueReminders().find(x => x.id === id);
   if (r) { const s = readReminderState(); writeReminderState({ ...s, skipped: { ...(s.skipped || {}), [id]: r.date } }); }
   return dueReminders();
 });
 
-let tray, quitting = false;
-function createTray() {
-  tray = new Tray(nativeImage.createFromPath(ICON).resize({ width: 16, height: 16 }));
-  tray.setToolTip('Invoicer');
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Open Invoicer', click: showWindow },
-    { type: 'separator' },
-    { label: 'Quit Invoicer', click: () => { quitting = true; app.quit(); } },
-  ]));
-  tray.on('click', showWindow);
-}
-
-app.on('second-instance', showWindow);
-app.on('before-quit', () => { quitting = true; });
-app.whenReady().then(() => {
+// Starting Invoicer while it's already running: a scheduled check just re-checks, anything else shows the window.
+app.on('second-instance', (_e, argv) => {
+  if (argv.includes('--check-reminders')) checkReminders(); else showWindow();
+});
+app.whenReady().then(async () => {
   DATA_DIR = resolveDataDir();
-  // Started by Windows at sign-in: stay in the tray until a reminder (or you) opens the window.
-  createWindow(!process.argv.includes('--hidden'));
-  createTray();
-  remindersChanged();
+  // 1.6.0 started Invoicer with Windows to sit in the tray; the scheduled task replaces that.
+  if (app.isPackaged && app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin) app.setLoginItemSettings({ openAtLogin: false, args: ['--hidden'] });
+  if (CHECK_ONLY) {
+    await syncReminderTask(true);
+    if (!checkReminders()) return app.quit();
+    // Wait for a click, but no longer than the task's own 12-hour limit.
+    setTimeout(() => app.quit(), 12 * 60 * 60 * 1000);
+    return;
+  }
+  createWindow(true);
+  syncReminderTask(true);
   win.webContents.once('did-finish-load', () => setTimeout(checkReminders, 3000));
   setInterval(checkReminders, 15 * 60 * 1000);
   powerMonitor.on('resume', checkReminders);
   powerMonitor.on('unlock-screen', checkReminders);
 });
-app.on('window-all-closed', () => app.quit());
+// A check-only run stays up without a window while a notification is waiting to be clicked.
+app.on('window-all-closed', () => { if (!CHECK_ONLY || !shown.size) app.quit(); });

@@ -10,7 +10,7 @@ A small Windows desktop app for making PDF invoices.
 - Data stored as plain JSON (`clients.json`, `settings.json`, `invoices.json`) in `Documents\Invoicer`, or any folder you choose (OneDrive works well)
 - Updates itself from an `updates` folder inside the data folder
 - Backs up every saved invoice to Google Drive (via Google Drive for desktop), and retries failed backups automatically
-- Invoice reminders per client (a day of the month, or the last working day). From that day, a Windows notification appears once a day from 9am until you save an invoice for that client or click "Skip this month". While any client has a reminder, Invoicer starts with Windows and keeps running in the system tray when you close the window. Quit it from the tray icon.
+- Invoice reminders per client (a day of the month, or the last working day). From that day, a Windows notification appears once a day from 9am until you save an invoice for that client or click "Skip this month". Invoicer doesn't need to be open. While any client has a reminder, a Windows Task Scheduler task ("Invoicer reminders") runs `Invoicer --check-reminders` every day at 9am, or as soon as the PC is on if it was off then. That run has no window and exits straight away unless a notification is showing. Turning off the last reminder deletes the task, and so does uninstalling Invoicer.
 
 Built with Electron and jsPDF.
 
@@ -55,9 +55,9 @@ Invoicer finds that folder by itself. Every time you save an invoice, it copies 
 
 | Path | What it is |
 | --- | --- |
-| `main.js` | Electron main process: window, tray, JSON storage, saving, Google Drive backups, reminders, updates |
+| `main.js` | Electron main process: window, JSON storage, saving, Google Drive backups, reminders and their scheduled task, updates |
 | `preload.js` | Bridge between the UI and the main process |
 | `app/` | UI (`index.html`, `renderer.js`, `style.css`) and PDF layout (`pdf.js`) |
 | `scripts/release.js` | Publishes a built installer to the updates folder |
-| `build/` | App icon and its generator |
+| `build/` | App icon and its generator; `installer.nsh` removes the reminder task on uninstall |
 | `prototype/invoicer.html` | The first single-file browser version |

@@ -82,7 +82,7 @@
         <h3>Invoice reminder</h3>
         <label>Remind me to invoice this client</label>
         <select data-cl="reminderDay" id="cl-reminder"></select>
-        <p class="muted">From that day, Windows shows a notification once a day until you save an invoice for this client (an invoice saved in the week before counts too). While any client has a reminder, Invoicer starts with Windows and keeps running in the system tray when you close it.</p>
+        <p class="muted">From that day, Windows shows a notification once a day until you save an invoice for this client (an invoice saved in the week before counts too). Invoicer doesn't need to be open: while any client has a reminder, Windows Task Scheduler checks every day at 9am, or as soon as your PC is on if it was off then. Turning off the last reminder removes the scheduled task.</p>
         <h3>Default line items</h3>
         <p class="muted" id="cl-items"></p>
         <div class="actions">

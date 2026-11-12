@@ -508,6 +508,9 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
     store.onReminders(renderReminders);
     store.onReminderOpen(invoiceClient);
     renderReminders(await store.dueReminders());
+    // Opened by clicking a reminder notification while Invoicer was closed.
+    const open = await store.takeReminderOpen();
+    if (open) invoiceClient(open);
   }
 })();
 

@@ -21,4 +21,5 @@ contextBridge.exposeInMainWorld('api', {
   skipReminder: id => ipcRenderer.invoke('reminders:skip', id),
   onReminders: fn => ipcRenderer.on('reminders', (_e, due) => fn(due)),
   onReminderOpen: fn => ipcRenderer.on('reminder:open', (_e, id) => fn(id)),
+  takeReminderOpen: () => ipcRenderer.invoke('reminders:takeOpen'),
 });

@@ -4,12 +4,13 @@ A small Windows desktop app for making PDF invoices.
 
 - Saved clients, each with a currency (GBP, USD, EUR, ZAR), hourly rate, daily rate and day-off reduction
 - Line items priced by hours, days, days off, or a fixed amount
-- Live PDF preview. Invoices save straight into a folder per client, `Documents\Invoicer\<Client>\Client Invoice - November 2026 - Your Name.pdf`. A second invoice in the same month gets its invoice number added to the name.
+- Live PDF preview with zoom (the − / + buttons, or Ctrl+ / Ctrl− / Ctrl+0 for fit to width). Invoices save straight into a folder per client, `Documents\Invoicer\<Client>\Client Invoice - November 2026 - Your Name.pdf`. A second invoice in the same month gets its invoice number added to the name.
 - Invoice numbers continue automatically from the last saved invoice
 - History of every saved invoice, which you can save again or copy
 - Data stored as plain JSON (`clients.json`, `settings.json`, `invoices.json`) in `Documents\Invoicer`, or any folder you choose (OneDrive works well)
 - Updates itself from an `updates` folder inside the data folder
 - Backs up every saved invoice to Google Drive (via Google Drive for desktop), and retries failed backups automatically
+- Invoice reminders per client (a day of the month, or the last working day). From that day, a Windows notification appears once a day from 9am until you save an invoice for that client or click "Skip this month". While any client has a reminder, Invoicer starts with Windows and keeps running in the system tray when you close the window. Quit it from the tray icon.
 
 Built with Electron and jsPDF.
 
@@ -54,7 +55,7 @@ Invoicer finds that folder by itself. Every time you save an invoice, it copies 
 
 | Path | What it is |
 | --- | --- |
-| `main.js` | Electron main process: window, JSON storage, save dialogs, Google Drive backups, updates |
+| `main.js` | Electron main process: window, tray, JSON storage, saving, Google Drive backups, reminders, updates |
 | `preload.js` | Bridge between the UI and the main process |
 | `app/` | UI (`index.html`, `renderer.js`, `style.css`) and PDF layout (`pdf.js`) |
 | `scripts/release.js` | Publishes a built installer to the updates folder |

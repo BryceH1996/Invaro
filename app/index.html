@@ -23,6 +23,7 @@
   <button class="btn primary" id="update-install">Restart &amp; update</button>
   <button class="x" id="update-later" title="Remind me later">×</button>
 </div>
+<div id="remind-bars"></div>
 <main>
   <div class="panel">
 
@@ -78,6 +79,10 @@
           <div><label>Day off reduction</label><input data-cl="dayOffRate" type="number" step="0.01" min="0" placeholder="= daily rate"></div>
         </div>
         <p class="muted">Rates are in the client's currency. Day off reduction is subtracted per day off; leave it blank to use the daily rate.</p>
+        <h3>Invoice reminder</h3>
+        <label>Remind me to invoice this client</label>
+        <select data-cl="reminderDay" id="cl-reminder"></select>
+        <p class="muted">From that day, Windows shows a notification once a day until you save an invoice for this client (an invoice saved in the week before counts too). While any client has a reminder, Invoicer starts with Windows and keeps running in the system tray when you close it.</p>
         <h3>Default line items</h3>
         <p class="muted" id="cl-items"></p>
         <div class="actions">
@@ -135,7 +140,14 @@
     </section>
 
   </div>
-  <div class="preview"><iframe id="preview" title="Invoice preview"></iframe></div>
+  <div class="preview">
+    <iframe id="preview" title="Invoice preview"></iframe>
+    <div class="zoom">
+      <button id="zoom-out" title="Zoom out (Ctrl+−)">−</button>
+      <button id="zoom-level" title="Fit to width (Ctrl+0)"></button>
+      <button id="zoom-in" title="Zoom in (Ctrl++)">+</button>
+    </div>
+  </div>
 </main>
 <div class="toast" id="toast"><span id="toast-msg"></span><button id="toast-act"></button></div>
 

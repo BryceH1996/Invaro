@@ -1,9 +1,15 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu, nativeImage, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
 app.setName('Invoicer');
+// Tests run with their own profile so they never clash with the installed app.
+if (process.env.INVOICER_PROFILE) app.setPath('userData', process.env.INVOICER_PROFILE);
+// One copy at a time: starting Invoicer again (e.g. while it's in the tray) shows the open window.
+if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
+if (app.isPackaged) app.setAppUserModelId('local.invoicer.app'); // needed for Windows notifications
+const ICON = path.join(__dirname, 'build', 'icon.png');
 
 // Data lives as plain JSON in a folder the user picks (default: Documents\Invoicer).
 // The chosen folder is remembered in %APPDATA%\Invoicer\config.json.
@@ -74,8 +80,10 @@ function writeJson(name, value) {
 }
 
 let win;
-function createWindow() {
+function createWindow(show) {
   win = new BrowserWindow({
+    show,
+    icon: ICON,
     width: 1320,
     height: 880,
     minWidth: 900,
@@ -91,6 +99,22 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, 'app', 'index.html'));
+  // With reminders on, closing the window keeps Invoicer running in the tray.
+  win.on('close', e => {
+    if (quitting || !remindersOn()) return;
+    e.preventDefault();
+    win.hide();
+    const state = readReminderState();
+    if (!state.trayHintShown && tray) {
+      tray.displayBalloon({ title: 'Invoicer is still running', content: "It'll remind you when it's time to invoice. Right-click the tray icon to quit.", iconType: 'info' });
+      writeReminderState({ ...state, trayHintShown: true });
+    }
+  });
+}
+function showWindow() {
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.show(); win.focus();
 }
 
 ipcMain.handle('data:load', () => ({
@@ -103,6 +127,7 @@ ipcMain.handle('data:load', () => ({
 ipcMain.handle('data:save', (_e, name, value) => {
   if (!FILES[name]) throw new Error('Unknown data file: ' + name);
   writeJson(name, value);
+  if (name === 'clients' || name === 'invoices') remindersChanged();
   return true;
 });
 
@@ -257,5 +282,100 @@ ipcMain.handle('shell:open', (_e, p) => shell.openPath(p));
 ipcMain.handle('shell:show', (_e, p) => shell.showItemInFolder(p));
 ipcMain.handle('shell:dataDir', () => { fs.mkdirSync(DATA_DIR, { recursive: true }); return shell.openPath(DATA_DIR); });
 
-app.whenReady().then(() => { DATA_DIR = resolveDataDir(); createWindow(); });
+// ---------- invoice reminders ----------
+// Each client can have a reminder day (1–28, or "last" = last working day of the month).
+// From that day, a Windows notification appears once a day until an invoice for that client
+// is saved (one saved up to a week before the reminder counts), or you skip the month.
+const reminderStatePath = () => path.join(app.getPath('userData'), 'reminders.json');
+function readReminderState() { try { return JSON.parse(fs.readFileSync(reminderStatePath(), 'utf8')); } catch (e) { return {}; } }
+function writeReminderState(s) { fs.mkdirSync(path.dirname(reminderStatePath()), { recursive: true }); fs.writeFileSync(reminderStatePath(), JSON.stringify(s, null, 2)); }
+const readQuiet = name => { try { return JSON.parse(fs.readFileSync(file(name), 'utf8')); } catch (e) { return null; } };
+// INVOICER_NOW lets tests pretend it's another date/time.
+const now = () => process.env.INVOICER_NOW ? new Date(process.env.INVOICER_NOW) : new Date();
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const remindersOn = () => !!DATA_DIR && (readQuiet('clients') || []).some(c => c.reminderDay);
+
+function reminderDate(day, y, m) {
+  const last = new Date(y, m + 1, 0);
+  if (day === 'last') { while (last.getDay() === 0 || last.getDay() === 6) last.setDate(last.getDate() - 1); return last; }
+  const n = parseInt(day, 10);
+  return n ? new Date(y, m, Math.min(n, last.getDate())) : null;
+}
+// Clients whose reminder for this month has come and who haven't been invoiced (or skipped) since.
+function dueReminders(at = now()) {
+  if (!DATA_DIR) return [];
+  const clients = readQuiet('clients') || [], invoices = readQuiet('invoices') || [];
+  const skipped = readReminderState().skipped || {};
+  const today = new Date(at.getFullYear(), at.getMonth(), at.getDate());
+  return clients.flatMap(c => {
+    const d = reminderDate(c.reminderDay, at.getFullYear(), at.getMonth());
+    if (!d || d > today || skipped[c.id] === ymd(d)) return [];
+    const since = new Date(d); since.setDate(since.getDate() - 7);
+    const invoiced = invoices.some(h => h.c && h.c.id === c.id && new Date(h.savedAt) >= since);
+    return invoiced ? [] : [{ id: c.id, company: c.company || 'a client', date: ymd(d) }];
+  });
+}
+
+const shown = []; // keep notifications referenced so their click handlers still work
+function notify(r) {
+  if (process.env.INVOICER_NOTIFY_LOG) fs.appendFileSync(process.env.INVOICER_NOTIFY_LOG, JSON.stringify(r) + '\n');
+  if (!Notification.isSupported()) return;
+  const n = new Notification({ title: `Time to invoice ${r.company}`, body: 'Click to start the invoice.', icon: ICON });
+  n.on('click', () => { showWindow(); win && win.webContents.send('reminder:open', r.id); });
+  n.on('close', () => shown.splice(shown.indexOf(n), 1));
+  shown.push(n);
+  n.show();
+}
+// Shows each due reminder at most once a day, from 9am.
+function checkReminders() {
+  const at = now();
+  const due = dueReminders(at);
+  if (win) win.webContents.send('reminders', due);
+  if (at.getHours() < 9) return;
+  const state = readReminderState(), notified = state.notified || {};
+  const fresh = due.filter(r => notified[r.id] !== ymd(at));
+  if (!fresh.length) return;
+  fresh.forEach(r => { notified[r.id] = ymd(at); notify(r); });
+  writeReminderState({ ...readReminderState(), notified });
+}
+// Called whenever clients or invoices are saved: refresh the in-app bars and start-with-Windows.
+function remindersChanged() {
+  if (win) win.webContents.send('reminders', dueReminders());
+  if (app.isPackaged) {
+    const on = remindersOn();
+    if (app.getLoginItemSettings().openAtLogin !== on) app.setLoginItemSettings({ openAtLogin: on, args: ['--hidden'] });
+  }
+}
+ipcMain.handle('reminders:due', () => dueReminders());
+ipcMain.handle('reminders:skip', (_e, id) => {
+  const r = dueReminders().find(x => x.id === id);
+  if (r) { const s = readReminderState(); writeReminderState({ ...s, skipped: { ...(s.skipped || {}), [id]: r.date } }); }
+  return dueReminders();
+});
+
+let tray, quitting = false;
+function createTray() {
+  tray = new Tray(nativeImage.createFromPath(ICON).resize({ width: 16, height: 16 }));
+  tray.setToolTip('Invoicer');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open Invoicer', click: showWindow },
+    { type: 'separator' },
+    { label: 'Quit Invoicer', click: () => { quitting = true; app.quit(); } },
+  ]));
+  tray.on('click', showWindow);
+}
+
+app.on('second-instance', showWindow);
+app.on('before-quit', () => { quitting = true; });
+app.whenReady().then(() => {
+  DATA_DIR = resolveDataDir();
+  // Started by Windows at sign-in: stay in the tray until a reminder (or you) opens the window.
+  createWindow(!process.argv.includes('--hidden'));
+  createTray();
+  remindersChanged();
+  win.webContents.once('did-finish-load', () => setTimeout(checkReminders, 3000));
+  setInterval(checkReminders, 15 * 60 * 1000);
+  powerMonitor.on('resume', checkReminders);
+  powerMonitor.on('unlock-screen', checkReminders);
+});
 app.on('window-all-closed', () => app.quit());

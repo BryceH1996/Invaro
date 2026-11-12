@@ -92,17 +92,48 @@ function newDraft(clientId) {
 
 // ---------- preview ----------
 let previewUrl = null, previewTimer = null;
-function refreshPreview() {
+// Preview zoom: null = fit to width, otherwise a percentage. Remembered in settings.
+const ZOOMS = [50, 67, 75, 90, 100, 110, 125, 150, 175, 200, 250, 300];
+const previewView = () => settings.previewZoom ? `zoom=${settings.previewZoom}` : 'view=FitH';
+function renderZoom() {
+  const z = settings.previewZoom;
+  $('#zoom-level').textContent = z ? z + '%' : 'Fit';
+  $('#zoom-out').disabled = z === ZOOMS[0];
+  $('#zoom-in').disabled = z === ZOOMS[ZOOMS.length - 1];
+}
+// Fit width is roughly 100% on a typical window, so stepping from "Fit" starts there.
+function zoomBy(step) {
+  const z = settings.previewZoom || 100;
+  const i = step > 0 ? ZOOMS.findIndex(v => v > z) : ZOOMS.findLastIndex(v => v < z);
+  setZoom(i < 0 ? z : ZOOMS[i]);
+}
+function setZoom(z) {
+  if (z === settings.previewZoom) return;
+  settings.previewZoom = z; persist('settings'); renderZoom(); refreshPreview(0);
+}
+$('#zoom-in').onclick = () => zoomBy(1);
+$('#zoom-out').onclick = () => zoomBy(-1);
+$('#zoom-level').onclick = () => setZoom(null);
+// Ctrl + / Ctrl − / Ctrl 0 (the PDF viewer handles Ctrl+wheel itself until the next refresh).
+window.addEventListener('keydown', e => {
+  if (!e.ctrlKey || e.altKey) return;
+  if (e.key === '+' || e.key === '=') zoomBy(1);
+  else if (e.key === '-') zoomBy(-1);
+  else if (e.key === '0') setZoom(null);
+  else return;
+  e.preventDefault();
+});
+function refreshPreview(delay = 250) {
   clearTimeout(previewTimer);
   previewTimer = setTimeout(() => {
     const c = client(draft.clientId);
     if (!c) { $('#preview').removeAttribute('src'); return; }
     const doc = buildPdf({ me: settings.me || {}, c, inv: draft, lines: priced(draft.items, c), pageSize: settings.pageSize });
     const url = doc.output('bloburl');
-    $('#preview').src = url + '#view=FitH&toolbar=0&navpanes=0';
+    $('#preview').src = `${url}#${previewView()}&toolbar=0&navpanes=0`;
     if (previewUrl) setTimeout(URL.revokeObjectURL.bind(URL, previewUrl), 2000);
     previewUrl = url;
-  }, 250);
+  }, delay);
 }
 
 // ---------- invoice tab ----------
@@ -308,10 +339,29 @@ $('#cl-delete').onclick = () => {
   if (draft.clientId === c.id) { draft = newDraft(); changed(); }
   editingClient = clients[0]?.id; persist('clients'); renderClients(); renderInvoice(); refreshPreview();
 };
-$('#cl-invoice').onclick = () => {
-  const keep = draft.number;
-  draft = newDraft(editingClient); draft.number = keep;
+// Switch the invoice being drafted to this client (keeping its number) and show it.
+function invoiceClient(id) {
+  if (!client(id)) return;
+  if (draft.clientId !== id) { const keep = draft.number; draft = newDraft(id); draft.number = keep; }
   renderInvoice(); changed(); go('invoice');
+}
+$('#cl-invoice').onclick = () => invoiceClient(editingClient);
+
+// ---------- invoice reminders (the checks and Windows notifications run in main.js) ----------
+const reminderOptions = () => '<option value="">Off</option>'
+  + Array.from({ length: 28 }, (_, i) => `<option value="${i + 1}">On the ${i + 1}${ordinal(i + 1)} of each month</option>`).join('')
+  + '<option value="last">On the last working day of each month</option>';
+const shortDate = s => { const d = parseDate(s); return `${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)}`; };
+function renderReminders(due) {
+  $('#remind-bars').innerHTML = (due || []).map(r =>
+    `<div class="update-bar remind"><span>Time to invoice <b>${esc(r.company)}</b> (reminder on ${esc(shortDate(r.date))}).</span>
+     <button class="btn primary" data-remind="invoice" data-id="${esc(r.id)}">Invoice now</button>
+     <button class="btn" data-remind="skip" data-id="${esc(r.id)}" title="No more reminders for ${esc(r.company)} until next month">Skip this month</button></div>`).join('');
+}
+$('#remind-bars').onclick = async e => {
+  const { remind, id } = e.target.dataset;
+  if (remind === 'invoice') invoiceClient(id);
+  else if (remind === 'skip') renderReminders(await store.skipReminder(id));
 };
 
 // ---------- me tab ----------
@@ -431,6 +481,7 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
   clients = d.clients; settings = d.settings; invoices = d.invoices; dataDir = d.dataDir;
   $('#cl-currency').innerHTML = Object.entries(CURRENCIES)
     .map(([code, { symbol, name }]) => `<option value="${code}">${code} (${symbol}) – ${name}</option>`).join('');
+  $('#cl-reminder').innerHTML = reminderOptions();
   let migrated = false;
   clients.forEach(c => {
     c.items = (c.items || []).map(normItem);
@@ -445,7 +496,7 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
   // A leftover draft whose number was already saved gets the next free number.
   if (numberUsed(draft.number)) draft.number = nextInvoiceNumber();
   editingClient = clients[0]?.id;
-  renderInvoice(); renderClients(); renderMe(); renderHistory(); refreshPreview();
+  renderInvoice(); renderClients(); renderMe(); renderHistory(); renderZoom(); refreshPreview();
   if (store.version) $('#app-version').textContent = 'v' + await store.version();
   checkForUpdate();
   setInterval(checkForUpdate, 30 * 60 * 1000);
@@ -453,6 +504,11 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
   retryPendingBackups();
   setInterval(retryPendingBackups, 10 * 60 * 1000);
   window.addEventListener('online', retryPendingBackups);
+  if (store.dueReminders) {
+    store.onReminders(renderReminders);
+    store.onReminderOpen(invoiceClient);
+    renderReminders(await store.dueReminders());
+  }
 })();
 
 // ---------- updates ----------

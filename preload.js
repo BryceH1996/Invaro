@@ -17,4 +17,8 @@ contextBridge.exposeInMainWorld('api', {
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   version: () => ipcRenderer.invoke('app:version'),
+  dueReminders: () => ipcRenderer.invoke('reminders:due'),
+  skipReminder: id => ipcRenderer.invoke('reminders:skip', id),
+  onReminders: fn => ipcRenderer.on('reminders', (_e, due) => fn(due)),
+  onReminderOpen: fn => ipcRenderer.on('reminder:open', (_e, id) => fn(id)),
 });

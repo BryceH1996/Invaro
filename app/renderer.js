@@ -15,8 +15,8 @@ const store = window.api || {
     return { clients: g('clients') || [], settings: g('settings') || { me: {}, prefix: 'INV-', nextNumber: 1, pageSize: 'letter' }, invoices: g('invoices') || [], dataDir: '(browser storage)' };
   },
   async save(k, v) { localStorage.setItem('invoicer.' + k, JSON.stringify(v)); },
-  async savePdf(bytes, name) {
-    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })); a.download = name; a.click(); return name;
+  async saveInvoice(bytes, client, name) {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' })); a.download = name; a.click(); return { path: name };
   },
   async open() {}, async showInFolder() {}, async openDataDir() {},
 };
@@ -189,7 +189,11 @@ $('#save-default').onclick = () => {
   const c = client(draft.clientId); if (!c) return;
   c.items = clone(draft.items); persist('clients'); toast(`Saved as default lines for ${c.company}`);
 };
-$('#reset-draft').onclick = () => { draft = newDraft(draft.clientId); renderInvoice(); changed(); };
+$('#open-client-folder').onclick = () => {
+  const c = client(draft.clientId);
+  if (c && store.openClientFolder) store.openClientFolder(c.company);
+};
+$('#reset-draft').onclick =() => { draft = newDraft(draft.clientId); renderInvoice(); changed(); };
 
 function fileName(c, inv, me) {
   const p = parseDate((inv.period || inv.date.slice(0, 7)) + '-01');
@@ -206,7 +210,7 @@ let backupState = { ready: false };
 // Copies the invoice into the backup folder. Records the result on the history entry; returns true on success.
 async function backupPdf(entry, bytes) {
   if (!store.backupWrite) return false;
-  const res = await store.backupWrite(bytes || pdfBytes(entry), backupName(entry), settings.backupDir || '');
+  const res = await store.backupWrite(bytes || pdfBytes(entry), backupName(entry), settings.backupDir || '', entry.c.company);
   if (res && !res.error) {
     entry.backup = res.path; entry.backupError = null; entry.backedUpAt = new Date().toISOString();
     return true;
@@ -232,14 +236,19 @@ async function retryPendingBackups() {
   if (ok) toast(`Backed up ${ok} invoice${ok === 1 ? '' : 's'} to Google Drive`);
 }
 
+// Saves the PDF into <data folder>\<Client>\ and backs it up. Returns the saved path, or null on failure.
 async function savePdf(entry) {
   const bytes = pdfBytes(entry);
-  const path = await store.savePdf(bytes, fileName(entry.c, entry.inv, entry.me), settings.lastSaveDir);
-  if (path && window.api) {
-    settings.lastSaveDir = path.replace(/[\\/][^\\/]*$/, ''); persist('settings');
-    const name = path.split(/[\\/]/).pop();
-    if (await backupPdf(entry, bytes)) toast(`Saved ${name} and backed up to Google Drive`, 'Open', () => store.open(path));
-    else toast(`Saved ${name}, but NOT backed up: ${entry.backupError}. It will retry automatically.`, 'Open', () => store.open(path));
+  const name = fileName(entry.c, entry.inv, entry.me);
+  const altName = name.replace(/\.pdf$/i, ` - ${entry.inv.number}.pdf`).replace(/[\\/:*?"<>|]/g, '');
+  const res = await store.saveInvoice(bytes, entry.c.company, name, altName, entry.file || '');
+  if (!res || res.error) { toast('Could not save the invoice: ' + ((res && res.error) || 'unknown error')); return null; }
+  const path = res.path;
+  entry.file = path;
+  if (window.api) {
+    const shown = path.split(/[\\/]/).slice(-2).join('\\'); // e.g. "Client\Client Invoice - ….pdf"
+    if (await backupPdf(entry, bytes)) toast(`Saved to ${shown} and backed up to Google Drive`, 'Open', () => store.open(path));
+    else toast(`Saved to ${shown}, but NOT backed up: ${entry.backupError}. It will retry automatically.`, 'Open', () => store.open(path));
   }
   return path;
 }
@@ -252,9 +261,11 @@ $('#download').onclick = async () => {
     inv: clone(draft), c: clone(c), me: clone(settings.me || {}), lines: priced(draft.items, c),
   };
   entry.total = round2(entry.lines.reduce((s, l) => s + l.amount, 0));
+  // Re-saving an invoice number that's already in History overwrites that same file.
+  const previous = invoices.find(h => h.inv.number === entry.inv.number);
+  entry.file = previous ? previous.file : '';
   const path = await savePdf(entry);
-  if (!path) return; // cancelled
-  entry.file = path;
+  if (!path) return; // save failed (already reported)
   const idx = invoices.findIndex(h => h.inv.number === entry.inv.number);
   if (idx >= 0) invoices[idx] = entry; else invoices.unshift(entry);
   persist('invoices');
@@ -376,7 +387,8 @@ function renderHistory() {
     `<tr><td>${esc(h.inv.number)}</td><td>${esc(h.c.company)}</td><td>${esc(h.inv.date)}</td>
      <td class="num">${esc(money(h.total, h.c.currency))}</td>
      <td>${driveCell(h)}</td>
-     <td class="num"><button class="btn" data-act="pdf" data-id="${h.id}">Save PDF</button>
+     <td class="num">${h.file && window.api ? `<button class="btn" data-act="open" data-id="${h.id}">Open</button>` : ''}
+     <button class="btn" data-act="pdf" data-id="${h.id}" title="Save this invoice again (e.g. after editing your details)">Re-save</button>
      <button class="btn" data-act="copy" data-id="${h.id}" title="Start a new invoice with these lines">Copy</button>
      <button class="x" data-act="del" data-id="${h.id}" title="Remove from history">×</button></td></tr>`).join('');
 }
@@ -384,6 +396,7 @@ $('#hist').onclick = async e => {
   const { act, id } = e.target.dataset;
   const h = invoices.find(x => x.id === id); if (!h) return;
   if (act === 'pdf') { if (await savePdf(h)) { persist('invoices'); renderHistory(); } }
+  else if (act === 'open') { const r = await store.open(h.file); if (r) toast(`Can't open it: ${r}`); }
   else if (act === 'drive') store.showInFolder(h.backup);
   else if (act === 'backup') {
     e.target.disabled = true; e.target.textContent = 'Backing up…';

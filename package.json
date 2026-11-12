@@ -1,7 +1,7 @@
 {
   "name": "invoicer",
   "productName": "Invoicer",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Desktop invoicing app: saved clients, rates, and PDF invoices.",
   "author": "Invoicer",
   "main": "main.js",
@@ -10,7 +10,7 @@
     "start": "electron .",
     "icon": "node build/make-icon.js",
     "dist": "electron-builder --win nsis --publish never",
-    "release": "electron-builder --win nsis --publish never && node scripts/release.js"
+    "release": "node scripts/release.js"
   },
   "dependencies": {
     "jspdf": "2.5.1"

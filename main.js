@@ -106,16 +106,31 @@ ipcMain.handle('data:save', (_e, name, value) => {
   return true;
 });
 
-ipcMain.handle('pdf:save', async (_e, bytes, defaultName, dir) => {
-  const startDir = dir && fs.existsSync(dir) ? dir : app.getPath('documents');
-  const { canceled, filePath } = await dialog.showSaveDialog(win, {
-    title: 'Save invoice',
-    defaultPath: path.join(startDir, defaultName),
-    filters: [{ name: 'PDF', extensions: ['pdf'] }],
-  });
-  if (canceled || !filePath) return null;
-  fs.writeFileSync(filePath, Buffer.from(bytes));
-  return filePath;
+// Errors are returned as { error } so the UI gets a clean message instead of an IPC stack.
+const safe = fn => async (...args) => { try { return await fn(...args); } catch (e) { return { error: e.message || String(e) }; } };
+// A client's company name as a Windows-safe folder name.
+const folderName = s => String(s || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '').replace(/[. ]+$/, '').trim() || 'Unnamed client';
+
+// Invoices are saved straight into <data folder>\<Client>\ (one folder per client).
+// `previous` is where this same invoice was saved before: re-saving it overwrites that file.
+// Any other invoice already using the name is kept, and this one gets `altName` instead.
+ipcMain.handle('pdf:saveToClient', safe((_e, bytes, client, name, altName, previous) => {
+  const dir = path.join(DATA_DIR, folderName(client));
+  fs.mkdirSync(dir, { recursive: true });
+  let dest = path.join(dir, name);
+  if (fs.existsSync(dest) && path.resolve(dest) !== path.resolve(previous || '')) dest = path.join(dir, altName);
+  try {
+    fs.writeFileSync(dest, Buffer.from(bytes));
+  } catch (e) {
+    if (e.code === 'EBUSY' || e.code === 'EPERM') throw new Error(`${path.basename(dest)} is open in another program. Close it and save again.`);
+    throw e;
+  }
+  return { path: dest };
+}));
+ipcMain.handle('shell:clientFolder', (_e, client) => {
+  const dir = path.join(DATA_DIR, folderName(client));
+  fs.mkdirSync(dir, { recursive: true });
+  return shell.openPath(dir);
 });
 
 // ---------- Google Drive backups ----------
@@ -136,10 +151,9 @@ function backupTarget(chosen) {
   const dir = chosen || (myDrive ? path.join(myDrive, BACKUP_FOLDER) : null);
   return { myDrive, dir, auto: !chosen, ready: !!dir && (isDir(dir) || isDir(path.dirname(dir))) };
 }
-// Errors are returned as { error } so the UI gets a clean message instead of an IPC stack.
-const safe = fn => async (...args) => { try { return await fn(...args); } catch (e) { return { error: e.message || String(e) }; } };
 ipcMain.handle('backup:status', (_e, chosen) => backupTarget(chosen));
-ipcMain.handle('backup:write', safe((_e, bytes, name, chosen) => {
+// Backups mirror the client folders: <backup folder>\<Client>\<file>.
+ipcMain.handle('backup:write', safe((_e, bytes, name, chosen, client) => {
   const t = backupTarget(chosen);
   if (!t.dir) throw new Error("Google Drive for desktop isn't installed or signed in");
   // Create "Invoicer Backups" inside an existing folder, but never invent the drive itself:
@@ -148,7 +162,9 @@ ipcMain.handle('backup:write', safe((_e, bytes, name, chosen) => {
     if (!isDir(path.dirname(t.dir))) throw new Error(`Can't reach ${t.dir}. Is Google Drive running?`);
     fs.mkdirSync(t.dir);
   }
-  const dest = path.join(t.dir, name);
+  const sub = path.join(t.dir, folderName(client));
+  fs.mkdirSync(sub, { recursive: true });
+  const dest = path.join(sub, name);
   fs.writeFileSync(dest, Buffer.from(bytes));
   return { path: dest };
 }));

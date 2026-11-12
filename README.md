@@ -42,8 +42,31 @@ This:
 2. Builds the installer.
 3. Copies it, together with `latest.json`, into `<data folder>/updates`. Installed copies show an "Update available" bar and install the update when you click it.
 4. Commits any uncommitted changes, tags `v<version>`, and pushes both to GitHub. If the push fails, the update is still published, and the script prints the `git push` command to run later.
+5. Creates a GitHub Release for the tag, with the installer attached. It uses `GITHUB_TOKEN` if set, otherwise the GitHub login git already uses. If this step fails, rerun just it with `npm run release -- --github-only`.
 
 Use `npm run release -- --no-build "note"` to reuse the installer already in `dist/`.
+
+## Installing it for someone else
+
+1. Add them as a collaborator on this repo (**Settings → Collaborators → Add people**).
+2. They open **Releases** on this repo while signed in to GitHub, download `Invoicer-Setup-<version>.exe` from the newest release and run it. Windows SmartScreen will warn that the app isn't signed: they click **More info → Run anyway**.
+3. For automatic updates, give them a read-only token. On GitHub, go to **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**:
+   - Resource owner: you
+   - Repository access: **Only select repositories → custom-invoicer**
+   - Permissions: **Contents: Read-only**
+   - Expiration: whatever you're comfortable with (they'll need a new token when it expires)
+
+   They paste it into **My details → Updates → Save token**. From then on they get the same "update available" bar you do. The token is stored encrypted by Windows on their PC. It can only read this repo, so it can also see the source code.
+
+Each copy keeps its own clients and invoices. Nothing of yours is in the installer.
+
+## Updates
+
+`npm run release` publishes each version to two places:
+- the `updates` folder inside your data folder. Your own copy updates from here, so you need no token.
+- a GitHub Release with the installer attached. Copies with a token saved under **My details → Updates** update from here.
+
+The app offers whichever is newer, downloads it, and installs it silently when you click **Restart & update**.
 
 ## Google Drive backup
 
@@ -58,6 +81,6 @@ Invoicer finds that folder by itself. Every time you save an invoice, it copies 
 | `main.js` | Electron main process: window, JSON storage, saving, Google Drive backups, reminders and their scheduled task, updates |
 | `preload.js` | Bridge between the UI and the main process |
 | `app/` | UI (`index.html`, `renderer.js`, `style.css`) and PDF layout (`pdf.js`) |
-| `scripts/release.js` | Publishes a built installer to the updates folder |
+| `scripts/release.js` | Builds, publishes to the updates folder, tags, pushes, and creates the GitHub Release |
 | `build/` | App icon and its generator; `installer.nsh` removes the reminder task on uninstall |
 | `prototype/invoicer.html` | The first single-file browser version |

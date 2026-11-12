@@ -558,6 +558,7 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
   editingClient = clients[0]?.id;
   renderInvoice(); renderClients(); renderMe(); renderHistory(); renderZoom(); refreshPreview();
   if (store.version) $('#app-version').textContent = 'v' + await store.version();
+  renderUpdates();
   checkForUpdate();
   setInterval(checkForUpdate, 30 * 60 * 1000);
   await refreshBackupStatus();
@@ -577,13 +578,51 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
 
 // ---------- updates ----------
 let dismissedVersion = null;
-async function checkForUpdate() {
-  if (!store.checkUpdate) return;
+// Returns the update on offer (or null). `manual` = the user clicked "Check now".
+async function checkForUpdate(manual) {
+  if (!store.checkUpdate) return null;
   const u = await store.checkUpdate().catch(() => null);
-  if (!u || u.version === dismissedVersion) return;
-  $('#update-msg').textContent = `Invoicer ${u.version} is available (you have ${u.current}).` + (u.notes ? ' ' + u.notes : '');
+  if (!u || (u.version === dismissedVersion && !manual)) return u;
+  const note = (u.notes || '').split('\n')[0].trim();
+  $('#update-msg').textContent = `Invoicer ${u.version} is available (you have ${u.current}).` + (note ? ' ' + note : '');
   $('#update-bar').hidden = false;
+  return u;
 }
+
+// ---------- updates settings (GitHub token) ----------
+async function renderUpdates() {
+  if (!store.updateTokenStatus) { $('#upd-status').textContent = 'Updates are only available in the desktop app.'; return; }
+  const s = await store.updateTokenStatus();
+  $('#upd-repo').textContent = s.repo || '';
+  $('#upd-token-remove').hidden = !s.set;
+  $('#upd-token').placeholder = s.set ? 'Token saved. Paste a new one to replace it.' : 'GitHub token (github_pat_… or ghp_…)';
+  const el = $('#upd-status');
+  el.className = 'drive-status' + (s.set ? ' on' : '');
+  el.textContent = `You have Invoicer ${s.version}. ` + (s.set ? 'Getting updates from GitHub.' : 'No GitHub token saved, so updates only come from the updates folder.');
+}
+$('#upd-token-save').onclick = async () => {
+  const token = $('#upd-token').value.trim();
+  if (!token) return toast('Paste a token first');
+  $('#upd-token-save').disabled = true;
+  const r = await store.setUpdateToken(token);
+  $('#upd-token-save').disabled = false;
+  if (r.error) return toast(r.error);
+  $('#upd-token').value = '';
+  toast('Token saved. ' + (r.latest ? `The newest version on GitHub is ${r.latest}.` : 'There are no releases on GitHub yet.'));
+  renderUpdates(); checkForUpdate(true);
+};
+$('#upd-token-remove').onclick = async () => {
+  if (!confirm('Remove the saved GitHub token? Invoicer will stop getting updates from GitHub.')) return;
+  await store.setUpdateToken('');
+  renderUpdates();
+};
+$('#upd-check').onclick = async () => {
+  $('#upd-check').disabled = true;
+  const u = await checkForUpdate(true);
+  $('#upd-check').disabled = false;
+  if (!u) toast("You're up to date.");
+};
+if (store.onUpdateProgress) store.onUpdateProgress(pct => { $('#update-msg').textContent = `Downloading the update… ${pct}%`; });
 $('#update-later').onclick = () => {
   dismissedVersion = $('#update-msg').textContent.match(/Invoicer (\S+)/)?.[1];
   $('#update-bar').hidden = true;
@@ -592,5 +631,9 @@ $('#update-install').onclick = async () => {
   $('#update-install').disabled = true;
   $('#update-msg').textContent = 'Saving your work and installing the update…';
   await flushSaves();
-  if (!(await store.installUpdate())) { $('#update-msg').textContent = 'Update file not found. Try again later.'; $('#update-install').disabled = false; }
+  const r = await store.installUpdate();
+  if (!r || r.error) {
+    $('#update-msg').textContent = r && r.error ? `Couldn't update: ${r.error}` : 'Update file not found. Try again later.';
+    $('#update-install').disabled = false;
+  }
 };

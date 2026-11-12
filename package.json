@@ -1,11 +1,12 @@
 {
   "name": "invoicer",
   "productName": "Invoicer",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "description": "Desktop invoicing app: saved clients, rates, and PDF invoices.",
   "author": "Invoicer",
   "main": "main.js",
   "private": true,
+  "updateRepo": "BryceH1996/custom-invoicer",
   "scripts": {
     "start": "electron .",
     "icon": "node build/make-icon.js",

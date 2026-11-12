@@ -2,7 +2,15 @@
 
 A small, no-fuss Windows app for freelancers who invoice the same clients every month. Pick a client, fill in your days or hours, and save a clean PDF invoice. Invoicer remembers the rest.
 
-**[⬇ Download the latest version](https://github.com/BryceH1996/invoicer/releases/latest)**: get `Invoicer-Setup-<version>.exe` from the newest release and run it.
+## Install
+
+**[⬇ Download the latest version](https://github.com/BryceH1996/invoicer/releases/latest)**
+
+1. Download `Invoicer-Setup-<version>.exe` from the [latest release](https://github.com/BryceH1996/invoicer/releases/latest).
+2. Run it. Invoicer isn't code-signed yet, so your browser may say the file "isn't commonly downloaded" (choose **Keep**), and Windows may show "Windows protected your PC" (click **More info → Run anyway**). [Is it safe?](#is-it-safe)
+3. Fill in **My details**, add a client under **Clients**, and make your first invoice.
+
+Invoicer keeps itself up to date after that. To remove it, go to **Windows Settings → Apps → Installed apps → Invoicer → Uninstall**. Your invoices and data stay in `Documents\Invoicer`.
 
 ![Making an invoice in Invoicer, with the live PDF preview on the right](docs/screenshot-invoice.png)
 
@@ -19,14 +27,6 @@ A small, no-fuss Windows app for freelancers who invoice the same clients every 
 - **Keeps itself up to date.** When a new version is out, a bar at the top offers to install it.
 
 ![The Notifications tab, with a reminder day for each client](docs/screenshot-notifications.png)
-
-## Installing
-
-1. Download `Invoicer-Setup-<version>.exe` from the [latest release](https://github.com/BryceH1996/invoicer/releases/latest).
-2. Run it. Invoicer isn't code-signed yet, so your browser may say the file "isn't commonly downloaded" (choose **Keep**), and Windows may show "Windows protected your PC" (click **More info → Run anyway**).
-3. Fill in **My details**, add a client under **Clients**, and make your first invoice.
-
-To remove it, go to **Windows Settings → Apps → Installed apps → Invoicer → Uninstall**. Your invoices and data stay in `Documents\Invoicer`.
 
 ## Is it safe?
 

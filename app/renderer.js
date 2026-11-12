@@ -589,33 +589,15 @@ async function checkForUpdate(manual) {
   return u;
 }
 
-// ---------- updates settings (GitHub token) ----------
+// ---------- updates settings ----------
 async function renderUpdates() {
-  if (!store.updateTokenStatus) { $('#upd-status').textContent = 'Updates are only available in the desktop app.'; return; }
-  const s = await store.updateTokenStatus();
+  if (!store.updateInfo) { $('#upd-status').textContent = 'Updates are only available in the desktop app.'; return; }
+  const s = await store.updateInfo();
   $('#upd-repo').textContent = s.repo || '';
-  $('#upd-token-remove').hidden = !s.set;
-  $('#upd-token').placeholder = s.set ? 'Token saved. Paste a new one to replace it.' : 'GitHub token (github_pat_… or ghp_…)';
-  const el = $('#upd-status');
-  el.className = 'drive-status' + (s.set ? ' on' : '');
-  el.textContent = `You have Invoicer ${s.version}. ` + (s.set ? 'Getting updates from GitHub.' : 'No GitHub token saved, so updates only come from the updates folder.');
+  $('#upd-status').className = 'drive-status on';
+  $('#upd-status').textContent = `You have Invoicer ${s.version}.`;
 }
-$('#upd-token-save').onclick = async () => {
-  const token = $('#upd-token').value.trim();
-  if (!token) return toast('Paste a token first');
-  $('#upd-token-save').disabled = true;
-  const r = await store.setUpdateToken(token);
-  $('#upd-token-save').disabled = false;
-  if (r.error) return toast(r.error);
-  $('#upd-token').value = '';
-  toast('Token saved. ' + (r.latest ? `The newest version on GitHub is ${r.latest}.` : 'There are no releases on GitHub yet.'));
-  renderUpdates(); checkForUpdate(true);
-};
-$('#upd-token-remove').onclick = async () => {
-  if (!confirm('Remove the saved GitHub token? Invoicer will stop getting updates from GitHub.')) return;
-  await store.setUpdateToken('');
-  renderUpdates();
-};
+$('#upd-releases').onclick = () => store.openReleases && store.openReleases();
 $('#upd-check').onclick = async () => {
   $('#upd-check').disabled = true;
   const u = await checkForUpdate(true);

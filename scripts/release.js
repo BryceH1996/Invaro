@@ -2,9 +2,10 @@
 //   1. checks this version hasn't been released already (git tag v<version>)
 //   2. builds the installer (electron-builder)
 //   3. publishes it to <data folder>/updates so installed copies offer the update
-//   4. commits any changes, tags v<version> and pushes both to GitHub
-//   5. creates a GitHub Release for v<version> with the installer attached; collaborators
-//      download it there, and their copies update from it (see "Updates" in the README)
+//   4. commits any changes, tags v<version> and pushes both to GitHub: the private repo
+//      (remote "origin") and the public copy (remote "public")
+//   5. creates a GitHub Release for v<version> on the public repo (package.json "updateRepo")
+//      with the installer attached. Anyone can download it there, and every copy updates from it
 //
 //   npm run release -- "Short note about what changed"
 //   npm run release -- --no-build "note"      (reuse the installer already in dist/)
@@ -22,7 +23,7 @@ const noBuild = args.includes('--no-build');
 const githubOnly = args.includes('--github-only');
 const notes = args.filter(a => !a.startsWith('--')).join(' ').trim();
 const tag = `v${pkg.version}`;
-const REPO = pkg.updateRepo; // "owner/name", in package.json
+const REPO = process.env.RELEASE_REPO || pkg.updateRepo; // "owner/name"
 
 const git = (cmd, opts = {}) => execSync(`git ${cmd}`, { cwd: root, encoding: 'utf8', ...opts }).trim();
 function fail(msg) { console.error(`\n✖ ${msg}`); process.exit(1); }
@@ -81,11 +82,13 @@ function releaseLocally() {
   try {
     git('push -q origin main', { stdio: ['ignore', 'pipe', 'pipe'] });
     git(`push -q origin ${tag}`, { stdio: ['ignore', 'pipe', 'pipe'] });
-    console.log(`✔ Pushed main and ${tag} to GitHub`);
+    git('push -q public main', { stdio: ['ignore', 'pipe', 'pipe'] });
+    git(`push -q public ${tag}`, { stdio: ['ignore', 'pipe', 'pipe'] });
+    console.log(`✔ Pushed main and ${tag} to GitHub (private and public repos)`);
     return true;
   } catch (e) {
     console.warn(`\n⚠ The update is published, but pushing to GitHub failed:\n${(e.stderr || e.message).toString().trim()}`);
-    console.warn(`  When you're back online, run:  git push origin main ${tag}`);
+    console.warn(`  When you're back online, run:  git push origin main ${tag} && git push public main ${tag}`);
     console.warn(`  and then:                      npm run release -- --github-only`);
     return false;
   }

@@ -121,13 +121,11 @@
       </div>
       <h3>Updates</h3>
       <p class="drive-status" id="upd-status">Checking…</p>
-      <p class="muted">Invoicer checks for new versions every 30 minutes and shows a bar at the top when one is ready. New versions are published on GitHub (<span id="upd-repo"></span>). That repo is private, so getting them from there needs a GitHub token that can read it. Ask whoever gave you Invoicer for one, and paste it here once.</p>
-      <div class="row" style="grid-template-columns:1fr auto auto">
-        <input id="upd-token" type="password" autocomplete="off" placeholder="GitHub token (github_pat_… or ghp_…)">
-        <button class="btn" id="upd-token-save">Save token</button>
+      <p class="muted">Invoicer checks GitHub (<span id="upd-repo"></span>) for new versions every 30 minutes and shows a bar at the top when one is ready.</p>
+      <div class="actions">
         <button class="btn" id="upd-check">Check now</button>
+        <button class="btn" id="upd-releases">See all versions</button>
       </div>
-      <button class="link" id="upd-token-remove" hidden>Remove the saved token</button>
       <h3>Data</h3>
       <p class="muted">Clients, settings and invoice history are saved as JSON files in:<br><code id="data-dir"></code></p>
       <div class="actions">

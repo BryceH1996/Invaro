@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, powerMonitor, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -258,33 +258,23 @@ function findUpdate() {
   return null;
 }
 // ---- updates from GitHub Releases ----
-// `npm run release` also attaches the installer to a GitHub Release. The repo is private,
-// so this needs a GitHub token that can read it, saved (encrypted by Windows) in config.json.
+// `npm run release` attaches each installer to a release on the public repo in package.json
+// ("updateRepo"), so any copy can check for and download updates without signing in.
 const UPDATE_REPO = require('./package.json').updateRepo;
-function getToken() {
-  if (process.env.INVOICER_GH_TOKEN) return process.env.INVOICER_GH_TOKEN; // tests
-  const enc = readConfig().ghToken;
-  if (!enc) return '';
-  try { return safeStorage.decryptString(Buffer.from(enc, 'base64')); } catch (e) { return ''; }
-}
-const ghHeaders = token => ({ Authorization: `Bearer ${token}`, 'User-Agent': 'Invoicer', 'X-GitHub-Api-Version': '2022-11-28' });
+const GH_HEADERS = { 'User-Agent': 'Invoicer', Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
 // The newest release on GitHub that has an installer, or null. Throws a readable error.
-async function githubLatest(token = getToken()) {
-  if (!token || !UPDATE_REPO) return null;
-  const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, { headers: { ...ghHeaders(token), Accept: 'application/vnd.github+json' } });
-  if (res.status === 401) throw new Error('GitHub rejected the token. It may have expired.');
-  if (res.status === 404 || res.status === 403) throw new Error(`The token can't see ${UPDATE_REPO}. Check it has read access to that repo.`);
+async function githubLatest() {
+  if (!UPDATE_REPO) return null;
+  const res = await fetch(`https://api.github.com/repos/${UPDATE_REPO}/releases/latest`, { headers: GH_HEADERS });
+  if (res.status === 404) return null; // no releases yet
   if (!res.ok) throw new Error(`GitHub said ${res.status}.`);
   const r = await res.json();
   const asset = (r.assets || []).find(a => /\.exe$/i.test(a.name));
-  return asset ? { version: String(r.tag_name).replace(/^v/, ''), notes: r.body || '', source: 'github', asset: asset.url, name: asset.name, size: asset.size } : null;
+  return asset ? { version: String(r.tag_name).replace(/^v/, ''), notes: r.body || '', source: 'github', asset: asset.browser_download_url, name: asset.name, size: asset.size } : null;
 }
 // Downloads a release installer to the temp folder, reporting progress to the window.
 async function downloadAsset(u) {
-  const token = getToken();
-  // GitHub answers with a redirect to its file storage, which must not get the token.
-  let res = await fetch(u.asset, { headers: { ...ghHeaders(token), Accept: 'application/octet-stream' }, redirect: 'manual' });
-  if (res.status >= 300 && res.status < 400) res = await fetch(res.headers.get('location'));
+  const res = await fetch(u.asset, { headers: { 'User-Agent': 'Invoicer' } });
   if (!res.ok) throw new Error(`Download failed (${res.status}).`);
   const total = Number(res.headers.get('content-length')) || u.size || 0;
   const dest = path.join(os.tmpdir(), u.name);
@@ -330,16 +320,13 @@ ipcMain.handle('update:install', safe(async () => {
   setTimeout(() => app.quit(), 300);
   return true;
 }));
-ipcMain.handle('update:tokenStatus', () => ({ set: !!getToken(), repo: UPDATE_REPO, version: app.getVersion() }));
-// Saves a GitHub token after checking it can read the repo. An empty token removes it.
-ipcMain.handle('update:setToken', safe(async (_e, token) => {
-  token = String(token || '').trim();
-  if (!token) { const cfg = readConfig(); delete cfg.ghToken; writeConfig(cfg); return { set: false }; }
-  if (!safeStorage.isEncryptionAvailable()) throw new Error("Windows can't encrypt the token on this PC.");
-  const latest = await githubLatest(token); // throws if the token can't read the repo
-  writeConfig({ ...readConfig(), ghToken: safeStorage.encryptString(token).toString('base64') });
-  return { set: true, latest: latest && latest.version };
-}));
+ipcMain.handle('update:info', () => {
+  // 1.7.0 kept a GitHub token for the private repo; updates no longer need one, so forget it.
+  const cfg = readConfig();
+  if (cfg.ghToken) { delete cfg.ghToken; writeConfig(cfg); }
+  return { repo: UPDATE_REPO, version: app.getVersion() };
+});
+ipcMain.handle('update:releases', () => UPDATE_REPO && shell.openExternal(`https://github.com/${UPDATE_REPO}/releases`));
 
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('shell:open', (_e, p) => shell.openPath(p));

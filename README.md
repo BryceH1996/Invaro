@@ -1,82 +1,105 @@
 # Invoicer
 
-A small Windows desktop app for making PDF invoices.
+A small, no-fuss Windows app for freelancers who invoice the same clients every month. Pick a client, fill in your days or hours, and save a clean PDF invoice. Invoicer remembers the rest.
 
-- Saved clients, each with a currency (GBP, USD, EUR, ZAR), hourly rate, daily rate and day-off reduction
-- Line items priced by hours, days, days off, or a fixed amount
-- Live PDF preview with zoom (the − / + buttons, or Ctrl+ / Ctrl− / Ctrl+0 for fit to width). Invoices save straight into a folder per client, `Documents\Invoicer\<Client>\Client Invoice - November 2026 - Your Name.pdf`. A second invoice in the same month gets its invoice number added to the name.
-- Invoice numbers continue automatically from the last saved invoice
-- History of every saved invoice, which you can save again or copy
-- Data stored as plain JSON (`clients.json`, `settings.json`, `invoices.json`) in `Documents\Invoicer`, or any folder you choose (OneDrive works well)
-- Updates itself from an `updates` folder inside the data folder
-- Backs up every saved invoice to Google Drive (via Google Drive for desktop), and retries failed backups automatically
-- Invoice reminders per client (a day of the month, or the last working day), all set from the **Notifications** tab. It shows each client's reminder, whether they're due, invoiced or skipped this month, and the next reminder date. It also shows whether the Windows task is set up and has a test-notification button. From that day, a Windows notification appears once a day from 9am until you save an invoice for that client or click "Skip this month". Invoicer doesn't need to be open. While any client has a reminder, a Windows Task Scheduler task ("Invoicer reminders") runs `Invoicer --check-reminders` every day at 9am, or as soon as the PC is on if it was off then. That run has no window and exits straight away unless a notification is showing. Turning off the last reminder deletes the task, and so does uninstalling Invoicer.
+**[⬇ Download the latest version](https://github.com/BryceH1996/invoicer/releases/latest)**: get `Invoicer-Setup-<version>.exe` from the newest release and run it.
 
-Built with Electron and jsPDF.
+![Making an invoice in Invoicer, with the live PDF preview on the right](docs/screenshot-invoice.png)
 
-## Development
+## What it does
+
+- **Saved clients.** Each client keeps its own address, payment terms, currency (GBP, USD, EUR or ZAR), hourly rate, daily rate and day-off reduction.
+- **Priced for you.** Add lines as days, hours, days off or fixed amounts, and the totals work themselves out from the client's rates.
+- **Live preview.** See the PDF update as you type. Zoom in and out with the − / + buttons, or Ctrl + / Ctrl − / Ctrl 0.
+- **Tidy files.** Each invoice is saved straight into a folder for that client, e.g. `Documents\Invoicer\Northwind Design Co\Northwind Design Co Invoice - November 2026 - Alex Morgan.pdf`.
+- **Numbering handled.** Invoice numbers carry on from the last one you saved.
+- **History.** Every invoice you've saved, ready to open, save again, or copy as the start of a new one.
+- **Reminders.** Choose a day each month for each client, and Windows reminds you until you've invoiced them. Invoicer doesn't need to be open for this.
+- **Backups.** If you use Google Drive for desktop, every saved invoice is copied to your Google Drive too.
+- **Keeps itself up to date.** When a new version is out, a bar at the top offers to install it.
+
+![The Notifications tab, with a reminder day for each client](docs/screenshot-notifications.png)
+
+## Installing
+
+1. Download `Invoicer-Setup-<version>.exe` from the [latest release](https://github.com/BryceH1996/invoicer/releases/latest).
+2. Run it. Invoicer isn't code-signed yet, so your browser may say the file "isn't commonly downloaded" (choose **Keep**), and Windows may show "Windows protected your PC" (click **More info → Run anyway**).
+3. Fill in **My details**, add a client under **Clients**, and make your first invoice.
+
+To remove it, go to **Windows Settings → Apps → Installed apps → Invoicer → Uninstall**. Your invoices and data stay in `Documents\Invoicer`.
+
+## Is it safe?
+
+Every release lists two things you can check:
+
+- **SHA-256 checksum:** a fingerprint of the installer. To check that your download is exactly the file that was published, run this in PowerShell in the folder you saved it to:
+  ```powershell
+  Get-FileHash .\Invoicer-Setup-<version>.exe
+  ```
+  The result should match the SHA-256 in the release notes.
+- **VirusTotal report:** the installer scanned by around 70 antivirus engines.
+
+The full source code is in this repository.
+
+**What Invoicer does on your PC:**
+- It keeps your clients, settings and invoice history as plain JSON files in `Documents\Invoicer`, or a folder you choose. It never sends them anywhere.
+- **Reminders:** while at least one client has a reminder, it adds a Windows scheduled task called "Invoicer reminders" that checks once a day at 9am. Turning off your last reminder, or uninstalling Invoicer, removes the task.
+- **Updates:** it checks this repository's Releases page for a newer version every 30 minutes. It only downloads and installs one when you click **Restart & update**.
+- **Backups:** if you have Google Drive for desktop, it copies saved invoices into your `My Drive` folder, and Google Drive uploads them as usual. Invoicer never signs in to Google itself.
+- It has no accounts, no tracking and no analytics.
+
+## Your data
+
+All of your data lives in your data folder (**My details → Data** shows where):
+
+| File | What's in it |
+| --- | --- |
+| `clients.json` | Your clients and their rates |
+| `settings.json` | Your details and invoice settings |
+| `invoices.json` | The history of saved invoices |
+| `<Client name>\*.pdf` | Your invoices, one folder per client |
+
+Putting the data folder inside OneDrive (or similar) backs everything up, and lets you use the same data on another PC.
+
+---
+
+## For developers
+
+Built with [Electron](https://www.electronjs.org/) and [jsPDF](https://github.com/parallax/jsPDF).
 
 ```bash
 npm install
-npm start
+npm start          # run it
+npm run dist       # build dist/Invoicer Setup <version>.exe
 ```
 
-## Building an installer
+### Releasing
 
-```bash
-npm run dist
-```
-
-This creates `dist/Invoicer Setup <version>.exe`.
-
-## Releasing an update
-
-Bump `version` in `package.json`, then run:
+Bump `version` in `package.json`, then:
 
 ```bash
 npm run release -- "What changed"
 ```
 
 This:
-1. Refuses to run if `v<version>` is already tagged, so you can't release the same version twice.
+1. Refuses to run if `v<version>` is already tagged.
 2. Builds the installer.
-3. Copies it, together with `latest.json`, into `<data folder>/updates`. Installed copies show an "Update available" bar and install the update when you click it.
-4. Commits any uncommitted changes, tags `v<version>`, and pushes both to this private repo (`origin`) and the public copy (`public`, github.com/BryceH1996/invoicer). If a push fails, the update is still published, and the script prints the `git push` commands to run later.
-5. Creates a GitHub Release for the tag on the public repo, with the installer attached. It uses `GITHUB_TOKEN` if set, otherwise the GitHub login git already uses. If this step fails, rerun just it with `npm run release -- --github-only`.
+3. Copies it, with `latest.json`, into `<data folder>/updates` (the developer's own copy updates from here).
+4. Commits, tags `v<version>`, and pushes to both the `origin` and `public` remotes.
+5. Creates the GitHub Release on the public repo (`updateRepo` in `package.json`) and attaches the installer. It then adds the SHA-256 and, if `VIRUSTOTAL_API_KEY` is set, the VirusTotal result to the release notes.
 
-Use `npm run release -- --no-build "note"` to reuse the installer already in `dist/`.
+`--no-build` reuses the installer in `dist/`. `--github-only` reruns only step 5 for a version that's already tagged. Step 5 uses `GITHUB_TOKEN`, or the GitHub login git already has.
 
-## Installing it for someone else
-
-Send them https://github.com/BryceH1996/invoicer/releases/latest. They download `Invoicer-Setup-<version>.exe` and run it. Windows SmartScreen will warn that the app isn't signed: they click **More info → Run anyway**. Their copy updates itself from the same page, with no GitHub account needed.
-
-Each copy keeps its own clients and invoices. Nothing of yours is in the installer.
-
-## The public repo
-
-`BryceH1996/invoicer` is a public copy of this repo. Releases push the same commits and tags to it. Only you can push to it: nobody else has access, force-pushes and deleting `main` are blocked, and issues and the wiki are turned off. Anyone can read and fork the code. It has no licence, so others have no right to reuse it.
-
-## Updates
-
-`npm run release` publishes each version to two places:
-- the `updates` folder inside your data folder (your own copy sees it straight away)
-- the public repo's GitHub Releases (every copy checks there every 30 minutes)
-
-The app offers whichever is newer, downloads it, and installs it silently when you click **Restart & update**.
-
-## Google Drive backup
-
-Install [Google Drive for desktop](https://www.google.com/drive/download/) and sign in. It shows your Drive as a `My Drive` folder, usually `G:\My Drive`, or `%USERPROFILE%\My Drive` in mirror mode.
-
-Invoicer finds that folder by itself. Every time you save an invoice, it copies the PDF to `My Drive\Invoicer Backups\<Client>\`, named with the invoice number. Google Drive then uploads it. If the copy fails, for example because Google Drive isn't running, History marks the invoice and Invoicer retries on start-up and every 10 minutes. To use a different folder, go to **My details → Use a different folder…**.
-
-## Repo layout
+### Layout
 
 | Path | What it is |
 | --- | --- |
-| `main.js` | Electron main process: window, JSON storage, saving, Google Drive backups, reminders and their scheduled task, updates |
+| `main.js` | Main process: window, JSON storage, saving, Google Drive backups, reminders and their scheduled task, updates |
 | `preload.js` | Bridge between the UI and the main process |
 | `app/` | UI (`index.html`, `renderer.js`, `style.css`) and PDF layout (`pdf.js`) |
-| `scripts/release.js` | Builds, publishes to the updates folder, tags, pushes, and creates the GitHub Release |
+| `scripts/release.js` | The release steps above |
 | `build/` | App icon and its generator; `installer.nsh` removes the reminder task on uninstall |
+| `docs/` | Screenshots for this README (made with invented sample data) |
 | `prototype/invoicer.html` | The first single-file browser version |
+
+© All rights reserved. The code is public so you can see what the app does. It isn't licensed for reuse.

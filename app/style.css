@@ -9,6 +9,12 @@ nav button.active, nav button:hover { opacity:1; background:rgba(255,255,255,.18
 header .version { margin-left:auto; font-size:12px; opacity:.75; }
 .update-bar { display:flex; align-items:center; gap:12px; padding:8px 20px; background:#fff4cc; border-bottom:1px solid #e8d48a; flex:none; }
 .update-bar[hidden] { display:none; }
+table.reminders select { width:100%; min-width:150px; }
+table.reminders td { vertical-align:middle; }
+table.reminders td:first-child, table.reminders td:last-child { white-space:nowrap; }
+table.reminders .due { color:#a5420e; font-weight:600; }
+table.reminders .ok { color:#2d7a3a; }
+table.reminders .btn { padding:4px 10px; margin:4px 4px 0 0; }
 .update-bar.remind { background:#e8f1ff; border-bottom-color:#b9cff0; }
 .update-bar span { flex:1; }
 .update-bar .btn { padding:5px 12px; }

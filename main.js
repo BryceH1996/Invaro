@@ -298,19 +298,28 @@ function reminderDate(day, y, m) {
   return n ? new Date(y, m, Math.min(n, last.getDate())) : null;
 }
 // Clients whose reminder for this month has come and who haven't been invoiced (or skipped) since.
-function dueReminders(at = now()) {
+// Where every client stands this month: off, upcoming, due, invoiced or skipped,
+// with this month's reminder date and the next one still to come.
+function reminderOverview(at = now()) {
   if (!DATA_DIR) return [];
   const clients = readQuiet('clients') || [], invoices = readQuiet('invoices') || [];
   const skipped = readReminderState().skipped || {};
   const today = new Date(at.getFullYear(), at.getMonth(), at.getDate());
-  return clients.flatMap(c => {
+  return clients.map(c => {
+    const base = { id: c.id, company: c.company || 'a client', reminderDay: c.reminderDay || '' };
     const d = reminderDate(c.reminderDay, at.getFullYear(), at.getMonth());
-    if (!d || d > today || skipped[c.id] === ymd(d)) return [];
+    if (!d) return { ...base, status: 'off' };
+    const following = ymd(reminderDate(c.reminderDay, at.getFullYear(), at.getMonth() + 1));
+    if (d > today) return { ...base, status: 'upcoming', date: ymd(d), next: ymd(d) };
+    if (skipped[c.id] === ymd(d)) return { ...base, status: 'skipped', date: ymd(d), next: following };
     const since = new Date(d); since.setDate(since.getDate() - 7);
-    const invoiced = invoices.some(h => h.c && h.c.id === c.id && new Date(h.savedAt) >= since);
-    return invoiced ? [] : [{ id: c.id, company: c.company || 'a client', date: ymd(d) }];
+    const inv = invoices.find(h => h.c && h.c.id === c.id && new Date(h.savedAt) >= since);
+    if (inv) return { ...base, status: 'invoiced', date: ymd(d), next: following, invoice: inv.inv && inv.inv.number };
+    return { ...base, status: 'due', date: ymd(d), next: following };
   });
 }
+// Clients whose reminder for this month has come and who haven't been invoiced (or skipped) since.
+const dueReminders = (at = now()) => reminderOverview(at).filter(r => r.status === 'due');
 
 // Clicking a notification opens the invoice for that client. If the window had to be
 // created first, the UI picks the client up with reminders:takeOpen once it has loaded.
@@ -414,6 +423,21 @@ function remindersChanged() {
   syncReminderTask();
 }
 ipcMain.handle('reminders:due', () => dueReminders());
+ipcMain.handle('reminders:overview', () => reminderOverview());
+// Whether the Windows scheduled task is there, and when it runs next.
+ipcMain.handle('reminders:task', async () => {
+  if (!taskEnabled()) return { enabled: false };
+  await syncReminderTask(true); // finish any pending change, and put the task back if it went missing
+  const q = await schtasks(['/query', '/tn', TASK, '/fo', 'list', '/v']);
+  if (!q.ok) return { enabled: true, exists: false };
+  const field = name => (q.out.match(new RegExp('^' + name + ':\\s*(.+)$', 'mi')) || [])[1];
+  return { enabled: true, exists: true, nextRun: field('Next Run Time'), lastRun: field('Last Run Time') };
+});
+ipcMain.handle('reminders:test', () => {
+  if (!Notification.isSupported()) return { error: "This version of Windows doesn't support notifications." };
+  new Notification({ title: 'Invoicer reminders are working', body: "This is how you'll be reminded to invoice a client.", icon: ICON }).show();
+  return {};
+});
 ipcMain.handle('reminders:takeOpen', () => { const id = pendingOpen; pendingOpen = null; return id; });
 ipcMain.handle('reminders:skip', (_e, id) => {
   const r = dueReminders().find(x => x.id === id);

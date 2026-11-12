@@ -14,6 +14,7 @@
     <button data-go="invoice" class="active">New invoice</button>
     <button data-go="clients">Clients</button>
     <button data-go="me">My details</button>
+    <button data-go="notifications">Notifications</button>
     <button data-go="history">History</button>
   </nav>
   <span class="version" id="app-version"></span>
@@ -80,9 +81,7 @@
         </div>
         <p class="muted">Rates are in the client's currency. Day off reduction is subtracted per day off; leave it blank to use the daily rate.</p>
         <h3>Invoice reminder</h3>
-        <label>Remind me to invoice this client</label>
-        <select data-cl="reminderDay" id="cl-reminder"></select>
-        <p class="muted">From that day, Windows shows a notification once a day until you save an invoice for this client (an invoice saved in the week before counts too). Invoicer doesn't need to be open: while any client has a reminder, Windows Task Scheduler checks every day at 9am, or as soon as your PC is on if it was off then. Turning off the last reminder removes the scheduled task.</p>
+        <p class="muted"><span id="cl-reminder"></span> <button class="link" id="cl-reminder-edit">Change in Notifications</button></p>
         <h3>Default line items</h3>
         <p class="muted" id="cl-items"></p>
         <div class="actions">
@@ -127,6 +126,24 @@
         <button class="btn" id="change-data">Change folder…</button>
       </div>
       <p class="muted">Tip: pick a folder inside OneDrive to have everything backed up automatically.</p>
+    </section>
+
+    <!-- NOTIFICATIONS -->
+    <section data-tab="notifications">
+      <h2>Notifications</h2>
+      <p class="muted">Pick a day for each client you want reminding about. From that day, Windows shows a notification once a day until you save an invoice for the client (one saved in the week before counts too), or you skip the month.</p>
+      <table class="reminders">
+        <thead><tr><th>Client</th><th>Remind me</th><th>This month</th><th>Next reminder</th></tr></thead>
+        <tbody id="rem-list"></tbody>
+      </table>
+      <p class="muted" id="rem-empty">Add a client on the Clients tab first.</p>
+      <h3>Windows</h3>
+      <p class="drive-status" id="rem-task">Checking…</p>
+      <p class="muted">Invoicer doesn't need to be open. While any client has a reminder, a Windows Task Scheduler task called "Invoicer reminders" checks every day at 9am, or as soon as your PC is on if it was off then. Turning off every reminder, or uninstalling Invoicer, removes that task.</p>
+      <div class="actions">
+        <button class="btn" id="rem-test">Send a test notification</button>
+        <button class="btn" id="rem-all-off">Turn all reminders off</button>
+      </div>
     </section>
 
     <!-- HISTORY -->

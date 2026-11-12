@@ -22,4 +22,7 @@ contextBridge.exposeInMainWorld('api', {
   onReminders: fn => ipcRenderer.on('reminders', (_e, due) => fn(due)),
   onReminderOpen: fn => ipcRenderer.on('reminder:open', (_e, id) => fn(id)),
   takeReminderOpen: () => ipcRenderer.invoke('reminders:takeOpen'),
+  reminderOverview: () => ipcRenderer.invoke('reminders:overview'),
+  reminderTask: () => ipcRenderer.invoke('reminders:task'),
+  testNotification: () => ipcRenderer.invoke('reminders:test'),
 });

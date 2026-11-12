@@ -318,7 +318,9 @@ function renderClients() {
   $('#cl-items').textContent = (c.items || []).length
     ? c.items.map(normItem).map(i => i.kind === 'fixed' ? `${i.desc} ${money(i.amount, c.currency)}` : `${i.desc} (${KINDS[i.kind].toLowerCase()})`).join(' · ')
     : 'None yet. Fill in lines on an invoice and click "Save lines as client default".';
+  $('#cl-reminder').textContent = reminderLabel(c.reminderDay) + '.';
 }
+$('#cl-reminder-edit').onclick = () => go('notifications');
 $('#cl-select').onchange = e => { editingClient = e.target.value; renderClients(); };
 $$('[data-cl]').forEach(el => el.oninput = () => {
   const c = client(editingClient); if (!c) return;
@@ -351,7 +353,64 @@ $('#cl-invoice').onclick = () => invoiceClient(editingClient);
 const reminderOptions = () => '<option value="">Off</option>'
   + Array.from({ length: 28 }, (_, i) => `<option value="${i + 1}">On the ${i + 1}${ordinal(i + 1)} of each month</option>`).join('')
   + '<option value="last">On the last working day of each month</option>';
+const reminderLabel = day => !day ? 'Off'
+  : day === 'last' ? 'On the last working day of each month' : `On the ${day}${ordinal(Number(day))} of each month`;
 const shortDate = s => { const d = parseDate(s); return `${d.getDate()} ${MONTHS[d.getMonth()].slice(0, 3)}`; };
+const longDate = s => { const d = parseDate(s); return `${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}`; };
+
+// ---------- notifications tab ----------
+async function renderNotifications() {
+  if (!store.reminderOverview) { $('#rem-task').textContent = 'Reminders are only available in the desktop app.'; return; }
+  const rows = await store.reminderOverview();
+  $('#rem-empty').style.display = rows.length ? 'none' : '';
+  const status = r => ({
+    off: () => '<span class="muted">–</span>',
+    upcoming: () => `Reminds you on ${esc(shortDate(r.date))}`,
+    due: () => `<span class="due">Due since ${esc(shortDate(r.date))}</span><br>
+      <button class="btn primary" data-remind="invoice" data-id="${esc(r.id)}">Invoice now</button><button class="btn" data-remind="skip" data-id="${esc(r.id)}">Skip this month</button>`,
+    invoiced: () => `<span class="ok">✓ Invoiced${r.invoice ? ' (' + esc(r.invoice) + ')' : ''}</span>`,
+    skipped: () => '<span class="muted">Skipped this month</span>',
+  }[r.status]());
+  $('#rem-list').innerHTML = rows.map(r => `<tr>
+    <td>${esc(r.company)}</td>
+    <td><select data-rem="${esc(r.id)}">${reminderOptions()}</select></td>
+    <td>${status(r)}</td>
+    <td>${r.status === 'due' ? 'Every day until invoiced' : r.next ? esc(longDate(r.next)) : '<span class="muted">–</span>'}</td></tr>`).join('');
+  rows.forEach(r => { $(`[data-rem="${CSS.escape(r.id)}"]`).value = r.reminderDay; });
+  $('#rem-all-off').disabled = !rows.some(r => r.reminderDay);
+  renderTaskStatus(rows.some(r => r.reminderDay));
+}
+async function renderTaskStatus(anyOn) {
+  const el = $('#rem-task');
+  const t = await store.reminderTask();
+  if (!t.enabled) { el.className = 'drive-status'; el.textContent = 'The Windows scheduled task is only set up by the installed app.'; }
+  else if (t.exists) { el.className = 'drive-status on'; el.textContent = `Windows reminder task is on. Next check: ${t.nextRun || 'unknown'}.`; }
+  else if (anyOn) { el.className = 'drive-status err'; el.textContent = "Couldn't set up the Windows reminder task, so reminders only appear while Invoicer is open."; }
+  else { el.className = 'drive-status'; el.textContent = 'No reminders set, so there is no Windows task.'; }
+}
+async function setReminder(id, day) {
+  const c = client(id); if (!c) return;
+  c.reminderDay = day;
+  persist('clients'); await flushSaves(); // saved now, so Windows' task is updated straight away
+  if (editingClient === id) $('#cl-reminder').textContent = reminderLabel(day) + '.';
+  renderNotifications();
+}
+$('#rem-list').onchange = e => { if (e.target.dataset.rem) setReminder(e.target.dataset.rem, e.target.value); };
+$('#rem-list').onclick = async e => {
+  const { remind, id } = e.target.dataset;
+  if (remind === 'invoice') invoiceClient(id);
+  else if (remind === 'skip') { renderReminders(await store.skipReminder(id)); renderNotifications(); }
+};
+$('#rem-test').onclick = async () => {
+  const r = await store.testNotification();
+  toast(r && r.error ? r.error : "Test notification sent. If you didn't see it, check Windows Settings → System → Notifications.");
+};
+$('#rem-all-off').onclick = async () => {
+  if (!confirm('Turn off invoice reminders for every client? This also removes the Windows scheduled task.')) return;
+  clients.forEach(c => { c.reminderDay = ''; });
+  persist('clients'); await flushSaves();
+  renderClients(); renderNotifications();
+};
 function renderReminders(due) {
   $('#remind-bars').innerHTML = (due || []).map(r =>
     `<div class="update-bar remind"><span>Time to invoice <b>${esc(r.company)}</b> (reminder on ${esc(shortDate(r.date))}).</span>
@@ -361,7 +420,7 @@ function renderReminders(due) {
 $('#remind-bars').onclick = async e => {
   const { remind, id } = e.target.dataset;
   if (remind === 'invoice') invoiceClient(id);
-  else if (remind === 'skip') renderReminders(await store.skipReminder(id));
+  else if (remind === 'skip') { renderReminders(await store.skipReminder(id)); if (tabShown('notifications')) renderNotifications(); }
 };
 
 // ---------- me tab ----------
@@ -473,7 +532,9 @@ function go(tab) {
   $$('section[data-tab]').forEach(s => s.classList.toggle('show', s.dataset.tab === tab));
   $$('nav button').forEach(b => b.classList.toggle('active', b.dataset.go === tab));
   if (tab === 'clients') renderClients();
+  if (tab === 'notifications') renderNotifications();
 }
+const tabShown = tab => $(`section[data-tab="${tab}"]`).classList.contains('show');
 $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
 
 (async function init() {
@@ -481,7 +542,6 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
   clients = d.clients; settings = d.settings; invoices = d.invoices; dataDir = d.dataDir;
   $('#cl-currency').innerHTML = Object.entries(CURRENCIES)
     .map(([code, { symbol, name }]) => `<option value="${code}">${code} (${symbol}) – ${name}</option>`).join('');
-  $('#cl-reminder').innerHTML = reminderOptions();
   let migrated = false;
   clients.forEach(c => {
     c.items = (c.items || []).map(normItem);
@@ -505,7 +565,8 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
   setInterval(retryPendingBackups, 10 * 60 * 1000);
   window.addEventListener('online', retryPendingBackups);
   if (store.dueReminders) {
-    store.onReminders(renderReminders);
+    // Main sends this whenever clients or invoices are saved, and on each check.
+    store.onReminders(due => { renderReminders(due); if (tabShown('notifications')) renderNotifications(); });
     store.onReminderOpen(invoiceClient);
     renderReminders(await store.dueReminders());
     // Opened by clicking a reminder notification while Invoicer was closed.

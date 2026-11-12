@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src blob:; object-src blob:">
+<title>Invoicer</title>
+<link rel="stylesheet" href="style.css">
+<script src="../node_modules/jspdf/dist/jspdf.umd.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>Invoicer</h1>
+  <nav>
+    <button data-go="invoice" class="active">New invoice</button>
+    <button data-go="clients">Clients</button>
+    <button data-go="me">My details</button>
+    <button data-go="history">History</button>
+  </nav>
+  <span class="version" id="app-version"></span>
+</header>
+<div class="update-bar" id="update-bar" hidden>
+  <span id="update-msg"></span>
+  <button class="btn primary" id="update-install">Restart &amp; update</button>
+  <button class="x" id="update-later" title="Remind me later">×</button>
+</div>
+<main>
+  <div class="panel">
+
+    <!-- INVOICE -->
+    <section data-tab="invoice" class="show">
+      <h2>New invoice</h2>
+      <label>Client</label>
+      <select id="inv-client"></select>
+      <p class="muted rates" id="inv-rates"></p>
+      <div class="row">
+        <div><label>Invoice no.</label><input id="inv-number"></div>
+        <div><label>Billing period (used in file name)</label><input id="inv-period" type="month"></div>
+      </div>
+      <div class="row">
+        <div><label>Invoice date</label><input id="inv-date" type="date"></div>
+        <div><label>Due date</label><input id="inv-due" type="date"></div>
+      </div>
+      <h3>Line items</h3>
+      <div class="items" id="inv-items"></div>
+      <div class="actions">
+        <button class="btn" id="add-item">+ Add line</button>
+        <button class="btn" id="save-default" title="Use these lines as the starting point for this client's next invoice">Save lines as client default</button>
+      </div>
+      <div class="total"><span>Total</span><span id="inv-total"></span></div>
+      <div class="actions">
+        <button class="btn primary" id="download">Save PDF…</button>
+        <button class="btn" id="reset-draft">Start fresh</button>
+      </div>
+      <p class="muted">Hours, days and days off are priced from the client's rates. Lines that come to zero are left off the PDF. Saving records the invoice in History and starts the next invoice with the following number.</p>
+    </section>
+
+    <!-- CLIENTS -->
+    <section data-tab="clients">
+      <h2>Clients</h2>
+      <div class="row" style="grid-template-columns:1fr auto">
+        <select id="cl-select"></select>
+        <button class="btn" id="cl-new">+ New client</button>
+      </div>
+      <div id="cl-form">
+        <label>Company</label><input data-cl="company">
+        <label>Contact people</label><input data-cl="contacts" placeholder="Jane Doe | John Doe">
+        <label>Phone</label><input data-cl="phone">
+        <label>Address (one line per row)</label><textarea data-cl="address" rows="4"></textarea>
+        <h3>Billing</h3>
+        <div class="row">
+          <div><label>Currency</label><select data-cl="currency" id="cl-currency"></select></div>
+          <div><label>Payment terms (days)</label><input data-cl="dueDays" type="number" min="0"></div>
+        </div>
+        <div class="row three">
+          <div><label>Hourly rate</label><input data-cl="hourlyRate" type="number" step="0.01" min="0"></div>
+          <div><label>Daily rate</label><input data-cl="dailyRate" type="number" step="0.01" min="0"></div>
+          <div><label>Day off reduction</label><input data-cl="dayOffRate" type="number" step="0.01" min="0" placeholder="= daily rate"></div>
+        </div>
+        <p class="muted">Rates are in the client's currency. Day off reduction is subtracted per day off; leave it blank to use the daily rate.</p>
+        <h3>Default line items</h3>
+        <p class="muted" id="cl-items"></p>
+        <div class="actions">
+          <button class="btn" id="cl-invoice">Invoice this client</button>
+          <button class="btn danger" id="cl-delete">Delete client</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ME -->
+    <section data-tab="me">
+      <h2>My details</h2>
+      <label>Name</label><input data-me="name">
+      <label>Address (one line per row)</label><textarea data-me="address" rows="3"></textarea>
+      <div class="row">
+        <div><label>Email</label><input data-me="email"></div>
+        <div><label>Phone</label><input data-me="phone"></div>
+      </div>
+      <label>Payment details / notes (printed under the total, optional)</label>
+      <textarea data-me="notes" rows="4" placeholder="Bank: ...&#10;Account: ..."></textarea>
+      <h3>Invoice settings</h3>
+      <div class="row">
+        <div><label>Invoice number prefix</label><input data-set="prefix"></div>
+        <div><label>Next invoice number</label><input data-set="nextNumber" type="number"></div>
+      </div>
+      <label>Page size</label>
+      <select data-set="pageSize"><option value="letter">Letter</option><option value="a4">A4</option></select>
+      <h3>Data</h3>
+      <p class="muted">Clients, settings and invoice history are saved as JSON files in:<br><code id="data-dir"></code></p>
+      <div class="actions">
+        <button class="btn" id="open-data">Open data folder</button>
+        <button class="btn" id="change-data">Change folder…</button>
+      </div>
+      <p class="muted">Tip: pick a folder inside OneDrive to have everything backed up automatically.</p>
+    </section>
+
+    <!-- HISTORY -->
+    <section data-tab="history">
+      <h2>History</h2>
+      <table>
+        <thead><tr><th>No.</th><th>Client</th><th>Date</th><th class="num">Total</th><th></th></tr></thead>
+        <tbody id="hist"></tbody>
+      </table>
+      <p class="muted" id="hist-empty">No invoices saved yet.</p>
+    </section>
+
+  </div>
+  <div class="preview"><iframe id="preview" title="Invoice preview"></iframe></div>
+</main>
+<div class="toast" id="toast"><span id="toast-msg"></span><button id="toast-act"></button></div>
+
+<script src="pdf.js"></script>
+<script src="renderer.js"></script>
+</body>
+</html>

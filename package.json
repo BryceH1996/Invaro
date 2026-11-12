@@ -1,7 +1,7 @@
 {
   "name": "invoicer",
   "productName": "Invoicer",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Desktop invoicing app: saved clients, rates, and PDF invoices.",
   "author": "Invoicer",
   "main": "main.js",
@@ -29,7 +29,6 @@
     "files": [
       "main.js",
       "preload.js",
-      "drive.js",
       "app/**/*",
       "package.json"
     ],

@@ -9,7 +9,7 @@ A small Windows desktop app for making PDF invoices.
 - History of every saved invoice, which you can save again or copy
 - Data stored as plain JSON (`clients.json`, `settings.json`, `invoices.json`) in `Documents\Invoicer`, or any folder you choose (OneDrive works well)
 - Updates itself from an `updates` folder inside the data folder
-- Backs up every saved invoice to an "Invoicer Backups" folder in Google Drive, and retries failed uploads automatically
+- Backs up every saved invoice to Google Drive (via Google Drive for desktop), and retries failed backups automatically
 
 Built with Electron and jsPDF.
 
@@ -38,22 +38,18 @@ npm run release -- "What changed"
 
 This builds the installer and copies it, together with `latest.json`, into `<data folder>/updates`. Installed copies show an "Update available" bar and install the update when you click it.
 
-## Google Drive backup setup (one time)
+## Google Drive backup
 
-1. Go to <https://console.cloud.google.com/>, create a project (e.g. "Invoicer"), and enable the **Google Drive API** for it.
-2. Under **Google Auth Platform → Branding**, fill in the app name and your email. Under **Audience**, choose **External**, then click **Publish app** so it's "In production". Apps left in "Testing" are signed out every 7 days.
-3. Under **Clients**, create a client with type **Desktop app**. Copy its client ID and client secret.
-4. In Invoicer, go to **My details → Google Drive backup**, paste both, and click **Connect Google Drive**. Approve access in your browser. Google warns that the app isn't verified, because it's your own app: click **Advanced → Go to Invoicer**.
+Install [Google Drive for desktop](https://www.google.com/drive/download/) and sign in. It shows your Drive as a `My Drive` folder, usually `G:\My Drive`, or `%USERPROFILE%\My Drive` in mirror mode.
 
-Invoicer only asks for the `drive.file` scope, so it can see only the files it creates. The credentials are stored encrypted in `%APPDATA%\Invoicer\google.json`, never in this repo.
+Invoicer finds that folder by itself. Every time you save an invoice, it copies the PDF to `My Drive\Invoicer Backups`, named with the invoice number. Google Drive then uploads it. If the copy fails, for example because Google Drive isn't running, History marks the invoice and Invoicer retries on start-up and every 10 minutes. To use a different folder, go to **My details → Use a different folder…**.
 
 ## Repo layout
 
 | Path | What it is |
 | --- | --- |
-| `main.js` | Electron main process: window, JSON storage, save dialogs, updates |
+| `main.js` | Electron main process: window, JSON storage, save dialogs, Google Drive backups, updates |
 | `preload.js` | Bridge between the UI and the main process |
-| `drive.js` | Google sign-in and Drive uploads |
 | `app/` | UI (`index.html`, `renderer.js`, `style.css`) and PDF layout (`pdf.js`) |
 | `scripts/release.js` | Publishes a built installer to the updates folder |
 | `build/` | App icon and its generator |

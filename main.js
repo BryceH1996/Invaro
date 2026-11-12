@@ -3,8 +3,6 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn } = require('child_process');
-const drive = require('./drive');
-
 app.setName('Invoicer');
 
 // Data lives as plain JSON in a folder the user picks (default: Documents\Invoicer).
@@ -121,15 +119,55 @@ ipcMain.handle('pdf:save', async (_e, bytes, defaultName, dir) => {
 });
 
 // ---------- Google Drive backups ----------
+// Google Drive for desktop shows your Drive as a "My Drive" folder (usually G:\My Drive,
+// or %USERPROFILE%\My Drive in mirror mode) and syncs it online. Invoicer copies every
+// saved invoice into "My Drive\Invoicer Backups", or into a folder you pick yourself.
+const BACKUP_FOLDER = 'Invoicer Backups';
+const isDir = p => { try { return fs.statSync(p).isDirectory(); } catch (e) { return false; } };
+function findMyDrive() {
+  if (process.env.INVOICER_MYDRIVE) return isDir(process.env.INVOICER_MYDRIVE) ? process.env.INVOICER_MYDRIVE : null;
+  const candidates = [...'GDEFHIJKLMNOPQRSTUVWXYZ'].map(l => `${l}:\\My Drive`);
+  candidates.push(path.join(os.homedir(), 'My Drive'));
+  return candidates.find(isDir) || null;
+}
+// The folder to back up to: the user's choice, else My Drive\Invoicer Backups.
+function backupTarget(chosen) {
+  const myDrive = findMyDrive();
+  const dir = chosen || (myDrive ? path.join(myDrive, BACKUP_FOLDER) : null);
+  return { myDrive, dir, auto: !chosen, ready: !!dir && (isDir(dir) || isDir(path.dirname(dir))) };
+}
 // Errors are returned as { error } so the UI gets a clean message instead of an IPC stack.
 const safe = fn => async (...args) => { try { return await fn(...args); } catch (e) { return { error: e.message || String(e) }; } };
-ipcMain.handle('drive:status', () => drive.status());
-ipcMain.handle('drive:connect', safe((_e, clientId, secret) => drive.connect(clientId, secret)));
-ipcMain.handle('drive:disconnect', safe(() => drive.disconnect()));
-ipcMain.handle('drive:upload', safe((_e, bytes, name) => drive.upload(bytes, name)));
-ipcMain.handle('drive:openFolder', safe(async () => { await shell.openExternal(await drive.folderLink()); return true; }));
+ipcMain.handle('backup:status', (_e, chosen) => backupTarget(chosen));
+ipcMain.handle('backup:write', safe((_e, bytes, name, chosen) => {
+  const t = backupTarget(chosen);
+  if (!t.dir) throw new Error("Google Drive for desktop isn't installed or signed in");
+  // Create "Invoicer Backups" inside an existing folder, but never invent the drive itself:
+  // a missing parent usually means Google Drive isn't running.
+  if (!isDir(t.dir)) {
+    if (!isDir(path.dirname(t.dir))) throw new Error(`Can't reach ${t.dir}. Is Google Drive running?`);
+    fs.mkdirSync(t.dir);
+  }
+  const dest = path.join(t.dir, name);
+  fs.writeFileSync(dest, Buffer.from(bytes));
+  return { path: dest };
+}));
+ipcMain.handle('backup:chooseDir', async (_e, current) => {
+  const t = backupTarget(current);
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: 'Choose where invoice backups go',
+    defaultPath: t.dir && isDir(t.dir) ? t.dir : (t.myDrive || app.getPath('documents')),
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  return canceled || !filePaths[0] ? null : filePaths[0];
+});
+ipcMain.handle('backup:open', safe((_e, chosen) => {
+  const t = backupTarget(chosen);
+  if (!t.dir || !isDir(t.dir)) throw new Error('The backup folder will be created when you save your first invoice.');
+  return shell.openPath(t.dir);
+}));
 ipcMain.handle('shell:external', (_e, url) => {
-  if (/^https:\/\/(drive|docs)\.google\.com\//.test(url)) return shell.openExternal(url);
+  if (url === 'https://www.google.com/drive/download/') return shell.openExternal(url);
 });
 
 // Switch data folder. If the chosen folder already has Invoicer data, use it;

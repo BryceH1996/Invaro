@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invoicer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  :root { --gold:#bf9000; --gold-light:#ffe599; --ink:#1f1f1f; --muted:#6b6b6b; --line:#e3e0d6; --bg:#f7f5ef; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--ink); background:var(--bg); }
+  header { display:flex; align-items:center; gap:24px; padding:12px 20px; background:var(--gold); color:#fff; }
+  header h1 { margin:0; font-size:18px; letter-spacing:.5px; }
+  nav button { background:none; border:0; color:#fff; opacity:.75; font:inherit; padding:6px 10px; cursor:pointer; border-radius:6px; }
+  nav button.active, nav button:hover { opacity:1; background:rgba(255,255,255,.18); }
+  main { display:grid; grid-template-columns:minmax(380px, 520px) 1fr; height:calc(100vh - 52px); }
+  .panel { overflow:auto; padding:20px; border-right:1px solid var(--line); background:#fff; }
+  .preview { background:#525659; }
+  .preview iframe { width:100%; height:100%; border:0; }
+  section[data-tab] { display:none; }
+  section[data-tab].show { display:block; }
+  h2 { font-size:15px; margin:0 0 14px; }
+  h3 { font-size:13px; margin:22px 0 8px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  input, select, textarea { width:100%; font:inherit; padding:7px 9px; border:1px solid #cfcabb; border-radius:6px; background:#fff; color:var(--ink); }
+  textarea { resize:vertical; min-height:64px; }
+  input:focus, select:focus, textarea:focus { outline:2px solid var(--gold-light); border-color:var(--gold); }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .items { display:grid; grid-template-columns:1fr 120px 32px; gap:6px; align-items:center; }
+  .items .hd { font-size:12px; color:var(--muted); }
+  button.btn { font:inherit; padding:8px 14px; border-radius:6px; border:1px solid #cfcabb; background:#fff; cursor:pointer; }
+  button.btn:hover { background:#faf7ee; }
+  button.primary { background:var(--gold); color:#fff; border-color:var(--gold); font-weight:600; }
+  button.primary:hover { background:#a67d00; }
+  button.danger { color:#b3261e; }
+  button.x { border:0; background:none; cursor:pointer; color:var(--muted); font-size:18px; }
+  button.x:hover { color:#b3261e; }
+  .actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
+  .total { display:flex; justify-content:space-between; margin-top:12px; padding:10px 12px; background:var(--gold-light); border-radius:6px; font-weight:600; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:7px 6px; border-bottom:1px solid var(--line); }
+  td.num, th.num { text-align:right; }
+  .muted { color:var(--muted); font-size:12px; }
+  .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#222; color:#fff; padding:8px 16px; border-radius:6px; opacity:0; transition:opacity .2s; pointer-events:none; }
+  .toast.on { opacity:1; }
+  @media (max-width: 900px) { main { grid-template-columns:1fr; height:auto; } .preview { height:80vh; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Invoicer</h1>
+  <nav>
+    <button data-go="invoice" class="active">New invoice</button>
+    <button data-go="clients">Clients</button>
+    <button data-go="me">My details</button>
+    <button data-go="history">History</button>
+  </nav>
+</header>
+<main>
+  <div class="panel">
+
+    <!-- INVOICE -->
+    <section data-tab="invoice" class="show">
+      <h2>New invoice</h2>
+      <label>Client</label>
+      <select id="inv-client"></select>
+      <div class="row">
+        <div><label>Invoice no.</label><input id="inv-number"></div>
+        <div><label>Billing period (used in file name)</label><input id="inv-period" type="month"></div>
+      </div>
+      <div class="row">
+        <div><label>Invoice date</label><input id="inv-date" type="date"></div>
+        <div><label>Due date</label><input id="inv-due" type="date"></div>
+      </div>
+      <h3>Line items</h3>
+      <div class="items" id="inv-items"></div>
+      <div class="actions">
+        <button class="btn" id="add-item">+ Add line</button>
+        <button class="btn" id="save-default" title="Use these lines as the starting point for this client's next invoice">Save lines as client default</button>
+      </div>
+      <div class="total"><span>Total</span><span id="inv-total"></span></div>
+      <div class="actions">
+        <button class="btn primary" id="download">Download PDF</button>
+        <button class="btn" id="reset-draft">Start fresh</button>
+      </div>
+      <p class="muted">Negative amounts (e.g. days off) are subtracted. Downloading records the invoice in History and bumps the next invoice number.</p>
+    </section>
+
+    <!-- CLIENTS -->
+    <section data-tab="clients">
+      <h2>Clients</h2>
+      <div class="row" style="grid-template-columns:1fr auto">
+        <select id="cl-select"></select>
+        <button class="btn" id="cl-new">+ New client</button>
+      </div>
+      <div id="cl-form">
+        <label>Company</label><input data-cl="company">
+        <label>Contact people</label><input data-cl="contacts" placeholder="Jane Doe">
+        <label>Phone</label><input data-cl="phone">
+        <label>Address (one line per row)</label><textarea data-cl="address" rows="4"></textarea>
+        <div class="row">
+          <div><label>Currency symbol</label><input data-cl="currency"></div>
+          <div><label>Payment terms (days)</label><input data-cl="dueDays" type="number" min="0"></div>
+        </div>
+        <h3>Default line items</h3>
+        <p class="muted" id="cl-items"></p>
+        <div class="actions">
+          <button class="btn" id="cl-invoice">Invoice this client</button>
+          <button class="btn danger" id="cl-delete">Delete client</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ME -->
+    <section data-tab="me">
+      <h2>My details</h2>
+      <label>Name</label><input data-me="name">
+      <label>Address (one line per row)</label><textarea data-me="address" rows="3"></textarea>
+      <div class="row">
+        <div><label>Email</label><input data-me="email"></div>
+        <div><label>Phone</label><input data-me="phone"></div>
+      </div>
+      <label>Payment details / notes (printed under the total, optional)</label>
+      <textarea data-me="notes" rows="4" placeholder="Bank: ...&#10;Account: ..."></textarea>
+      <h3>Invoice settings</h3>
+      <div class="row">
+        <div><label>Invoice number prefix</label><input data-set="prefix"></div>
+        <div><label>Next invoice number</label><input data-set="nextNumber" type="number"></div>
+      </div>
+      <label>Page size</label>
+      <select data-set="pageSize"><option value="letter">Letter</option><option value="a4">A4</option></select>
+      <h3>Backup</h3>
+      <p class="muted">Everything is stored in this browser only. Export a backup now and then.</p>
+      <div class="actions">
+        <button class="btn" id="export">Export backup</button>
+        <button class="btn" id="import">Import backup</button>
+        <input type="file" id="import-file" accept=".json" hidden>
+      </div>
+    </section>
+
+    <!-- HISTORY -->
+    <section data-tab="history">
+      <h2>History</h2>
+      <table>
+        <thead><tr><th>No.</th><th>Client</th><th>Date</th><th class="num">Total</th><th></th></tr></thead>
+        <tbody id="hist"></tbody>
+      </table>
+      <p class="muted" id="hist-empty">No invoices downloaded yet.</p>
+    </section>
+
+  </div>
+  <div class="preview"><iframe id="preview" title="Invoice preview"></iframe></div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const KEY = 'invoicer.v1';
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const uid = () => Math.random().toString(36).slice(2, 10);
+const clone = o => JSON.parse(JSON.stringify(o));
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+// ---------- dates ----------
+const pad = n => String(n).padStart(2, '0');
+const iso = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const parse = s => { const [y,m,d] = (s||'').split('-').map(Number); return y ? new Date(y, (m||1)-1, d||1) : null; };
+const addDays = (s, n) => { const d = parse(s); d.setDate(d.getDate() + Number(n||0)); return iso(d); };
+const suffix = d => (d % 100 >= 11 && d % 100 <= 13) ? 'th' : ({1:'st',2:'nd',3:'rd'}[d % 10] || 'th');
+
+// ---------- state ----------
+function seed() {
+  const c = { id: uid(), company: 'Example Client Ltd', contacts: 'Jane Doe', phone: '+44 20 0000 0000',
+    address: '1 Example Road\nExampletown\nAB1 2CD', currency: '£', dueDays: 14,
+    items: [{ desc: 'Frontend Development:', amount: 0 }] };
+  return {
+    me: { name: 'Your Name', address: '1 Your Street\nYour City, 0000', email: 'you@example.com', phone: '+00 00 000 0000', notes: '' },
+    settings: { prefix: 'INV-', nextNumber: 1001, pageSize: 'letter' },
+    clients: [c], history: [], draft: null,
+  };
+}
+function load() { try { return JSON.parse(localStorage.getItem(KEY)); } catch (e) { return null; } }
+function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+let state = load() || seed();
+
+const client = id => state.clients.find(c => c.id === id);
+function newDraft(clientId) {
+  const c = client(clientId) || state.clients[0];
+  const today = iso(new Date());
+  return { clientId: c ? c.id : null, number: state.settings.prefix + state.settings.nextNumber,
+    date: today, due: c ? addDays(today, c.dueDays) : today, period: today.slice(0, 7),
+    items: c ? clone(c.items || []) : [{ desc: '', amount: 0 }] };
+}
+if (!state.draft) state.draft = newDraft();
+
+// ---------- money ----------
+const total = items => items.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+const money = (n, cur) => (n < 0 ? '-' : '') + (cur || '') + Math.abs(n).toFixed(2);
+
+// ---------- PDF ----------
+function buildPdf({ me, c, inv, pageSize }) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'pt', format: pageSize || 'letter' });
+  const W = doc.internal.pageSize.getWidth();
+  const L = (W - 469) / 2, R = L + 469, M = L + 264;
+  const LIGHT = [255, 229, 153], DARK = [191, 144, 0], TEAL = [74, 143, 176];
+  const cur = c.currency || '';
+
+  // header blocks
+  doc.setFillColor(...LIGHT); doc.rect(L, 87, M - L, 161, 'F');
+  doc.setFillColor(...DARK);  doc.rect(M, 87, R - M, 161, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.setTextColor(255);
+  doc.text('INVOICE', R - 6, 121, { align: 'right' });
+
+  // my details (bottom-aligned in the light block)
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(11); doc.setTextColor(0);
+  const lines = [...(me.address || '').split('\n').filter(Boolean)];
+  const rest = [...lines, me.email ? '\u0000email' : null, me.phone].filter(Boolean);
+  let y = 241 - 19.5 * (rest.length - 1);
+  doc.text(me.name || '', L + 6, Math.max(y - 28, 105));
+  for (const ln of rest) {
+    if (ln === '\u0000email') {
+      doc.setTextColor(17, 85, 204);
+      doc.textWithLink(me.email, L + 6, y, { url: 'mailto:' + me.email });
+      doc.setDrawColor(17, 85, 204); doc.setLineWidth(0.6);
+      doc.line(L + 6, y + 1.6, L + 6 + doc.getTextWidth(me.email), y + 1.6);
+      doc.setTextColor(0);
+    } else doc.text(ln, L + 6, y);
+    y += 19.5;
+  }
+
+  // invoice meta (white bold in the dark block)
+  doc.setFont('helvetica', 'bold'); doc.setTextColor(255);
+  const lx = M + 6, vx = M + 82;
+  doc.text('Invoice No.:', lx, 164);   doc.text(inv.number || '', vx, 164);
+  doc.text('Invoice Date:', lx, 183);  drawDate(doc, inv.date, vx, 183, 11);
+  doc.text('Due Date:', lx, 202);      drawDate(doc, inv.due, vx, 202, 11);
+
+  // bill to
+  doc.setTextColor(0); doc.setFontSize(11);
+  doc.text('BILL TO:', L + 6, 272);
+  doc.setFont('helvetica', 'normal');
+  y = 285.5;
+  for (const ln of (c.address || '').split('\n').filter(Boolean)) { doc.text(ln, L + 6, y); y += 14; }
+  if (c.contacts) { doc.text(c.contacts, L + 6, y); y += 18; }
+  const co = [c.company, c.phone].filter(Boolean).join(' | ');
+  if (co) { doc.text(co, L + 6, y); y += 14; }
+
+  // table header
+  let t = Math.max(354, y - 2);
+  doc.setFillColor(...DARK); doc.rect(L, t, R - L, 30, 'F');
+  doc.setFontSize(14); doc.setTextColor(255);
+  doc.text('DESCRIPTION', L + 6, t + 20); doc.text('AMOUNT', R - 6, t + 20, { align: 'right' });
+  t += 30;
+
+  // rows
+  const items = inv.items || [];
+  const rows = Math.max(8, items.length);
+  doc.setFontSize(11); doc.setTextColor(0);
+  for (let i = 0; i < rows; i++) {
+    if (i % 2 === 1) { doc.setFillColor(...LIGHT); doc.rect(L, t, R - L, 30, 'F'); }
+    const it = items[i];
+    if (it && (it.desc || it.amount)) {
+      const d = doc.splitTextToSize(it.desc || '', 340)[0] || '';
+      doc.text(d, L + 6, t + 19);
+      doc.text(money(Number(it.amount) || 0, cur), R - 6, t + 19, { align: 'right' });
+    }
+    t += 30;
+  }
+
+  // total
+  t += 31;
+  doc.setDrawColor(...TEAL); doc.setLineWidth(0.9);
+  doc.line(M, t, R, t);
+  doc.text('TOTAL', M - 6, t + 15.5, { align: 'right' });
+  doc.text(money(total(items), cur), R - 6, t + 15.5, { align: 'right' });
+  doc.line(M, t + 31, R, t + 31);
+
+  // optional notes / payment details
+  if (me.notes && me.notes.trim()) {
+    doc.setFontSize(9.5); doc.setTextColor(80);
+    let ny = t + 60;
+    for (const ln of me.notes.split('\n')) {
+      for (const part of doc.splitTextToSize(ln || ' ', R - L - 12)) { doc.text(part, L + 6, ny); ny += 13; }
+    }
+  }
+  return doc;
+}
+
+function drawDate(doc, s, x, y, size) {
+  const d = parse(s); if (!d) return;
+  const day = String(d.getDate());
+  doc.setFontSize(size); doc.text(day, x, y); x += doc.getTextWidth(day);
+  doc.setFontSize(size * 0.62); const suf = suffix(d.getDate());
+  doc.text(suf, x + 0.3, y - size * 0.36); x += doc.getTextWidth(suf) + 0.6;
+  doc.setFontSize(size); doc.text(` ${MONTHS[d.getMonth()]} ${d.getFullYear()}`, x, y);
+}
+
+function fileName(c, inv, me) {
+  const p = parse((inv.period || inv.date.slice(0, 7)) + '-01');
+  const name = `${c.company || 'Client'} Invoice - ${MONTHS[p.getMonth()]} ${p.getFullYear()} - ${me.name || 'Me'}.pdf`;
+  return name.replace(/[\\/:*?"<>|]/g, '');
+}
+
+// ---------- preview ----------
+let previewUrl = null, previewTimer = null;
+function refreshPreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => {
+    const c = client(state.draft.clientId);
+    if (!c || !window.jspdf) return;
+    const doc = buildPdf({ me: state.me, c, inv: state.draft, pageSize: state.settings.pageSize });
+    const url = doc.output('bloburl');
+    $('#preview').src = url + '#view=FitH&toolbar=0';
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = url;
+  }, 250);
+}
+
+// ---------- invoice tab ----------
+function renderClientOptions() {
+  const opts = state.clients.map(c => `<option value="${c.id}">${esc(c.company || '(unnamed)')}</option>`).join('');
+  $('#inv-client').innerHTML = opts; $('#cl-select').innerHTML = opts;
+  $('#inv-client').value = state.draft.clientId || '';
+}
+function renderInvoice() {
+  renderClientOptions();
+  const d = state.draft;
+  $('#inv-number').value = d.number; $('#inv-period').value = d.period;
+  $('#inv-date').value = d.date; $('#inv-due').value = d.due;
+  renderItems();
+}
+function renderItems() {
+  const box = $('#inv-items');
+  box.innerHTML = '<div class="hd">Description</div><div class="hd">Amount</div><div></div>';
+  state.draft.items.forEach((it, i) => {
+    const desc = document.createElement('input'); desc.value = it.desc || ''; desc.placeholder = 'e.g. Frontend Development';
+    const amt = document.createElement('input'); amt.type = 'number'; amt.step = '0.01'; amt.value = it.amount ?? '';
+    const x = document.createElement('button'); x.className = 'x'; x.textContent = '×'; x.title = 'Remove line';
+    desc.oninput = () => { it.desc = desc.value; changed(); };
+    amt.oninput = () => { it.amount = parseFloat(amt.value) || 0; changed(); };
+    x.onclick = () => { state.draft.items.splice(i, 1); renderItems(); changed(); };
+    box.append(desc, amt, x);
+  });
+  updateTotal();
+}
+function updateTotal() {
+  const c = client(state.draft.clientId);
+  $('#inv-total').textContent = money(total(state.draft.items), c && c.currency);
+}
+function changed() { save(); updateTotal(); refreshPreview(); }
+
+$('#inv-client').onchange = e => {
+  const keepNumber = state.draft.number;
+  state.draft = newDraft(e.target.value); state.draft.number = keepNumber;
+  renderInvoice(); changed();
+};
+$('#inv-number').oninput = e => { state.draft.number = e.target.value; changed(); };
+$('#inv-period').oninput = e => { state.draft.period = e.target.value; changed(); };
+$('#inv-date').oninput = e => {
+  state.draft.date = e.target.value;
+  const c = client(state.draft.clientId);
+  if (c && e.target.value) { state.draft.due = addDays(e.target.value, c.dueDays); $('#inv-due').value = state.draft.due; }
+  changed();
+};
+$('#inv-due').oninput = e => { state.draft.due = e.target.value; changed(); };
+$('#add-item').onclick = () => { state.draft.items.push({ desc: '', amount: 0 }); renderItems(); changed(); $('#inv-items input:nth-last-of-type(2)')?.focus(); };
+$('#save-default').onclick = () => {
+  const c = client(state.draft.clientId); if (!c) return;
+  c.items = clone(state.draft.items.filter(i => i.desc || i.amount)); save(); toast(`Saved as default lines for ${c.company}`);
+};
+$('#reset-draft').onclick = () => { state.draft = newDraft(state.draft.clientId); renderInvoice(); changed(); };
+
+$('#download').onclick = () => {
+  const c = client(state.draft.clientId);
+  if (!c) return toast('Add a client first');
+  const inv = clone(state.draft);
+  const doc = buildPdf({ me: state.me, c, inv, pageSize: state.settings.pageSize });
+  doc.save(fileName(c, inv, state.me));
+  // record in history (replace if same number re-downloaded)
+  const entry = { id: uid(), at: Date.now(), inv, c: clone(c), me: clone(state.me), pageSize: state.settings.pageSize };
+  const idx = state.history.findIndex(h => h.inv.number === inv.number);
+  if (idx >= 0) state.history[idx] = entry; else state.history.unshift(entry);
+  const n = parseInt(String(inv.number).replace(/\D/g, ''), 10);
+  if (!isNaN(n) && n >= Number(state.settings.nextNumber)) state.settings.nextNumber = n + 1;
+  save(); renderHistory(); renderMe();
+  toast('PDF downloaded');
+};
+
+// ---------- clients tab ----------
+let editingClient = state.clients[0]?.id;
+function renderClients() {
+  renderClientOptions();
+  const c = client(editingClient) || state.clients[0];
+  $('#cl-form').style.display = c ? '' : 'none';
+  if (!c) return;
+  editingClient = c.id; $('#cl-select').value = c.id;
+  $$('[data-cl]').forEach(el => el.value = c[el.dataset.cl] ?? '');
+  $('#cl-items').textContent = (c.items || []).length
+    ? c.items.map(i => `${i.desc} ${money(Number(i.amount) || 0, c.currency)}`).join(' · ')
+    : 'None yet. Fill in lines on an invoice and click "Save lines as client default".';
+}
+$('#cl-select').onchange = e => { editingClient = e.target.value; renderClients(); };
+$$('[data-cl]').forEach(el => el.oninput = () => {
+  const c = client(editingClient); if (!c) return;
+  c[el.dataset.cl] = el.type === 'number' ? Number(el.value) : el.value;
+  save(); renderClientOptions(); $('#cl-select').value = c.id;
+  if (c.id === state.draft.clientId) { updateTotal(); refreshPreview(); }
+});
+$('#cl-new').onclick = () => {
+  const c = { id: uid(), company: 'New client', contacts: '', phone: '', address: '', currency: '£', dueDays: 14, items: [] };
+  state.clients.push(c); editingClient = c.id; save(); renderClients();
+  $('[data-cl="company"]').select();
+};
+$('#cl-delete').onclick = () => {
+  const c = client(editingClient); if (!c) return;
+  if (!confirm(`Delete ${c.company}? Past invoices in History are kept.`)) return;
+  state.clients = state.clients.filter(x => x.id !== c.id);
+  if (state.draft.clientId === c.id) state.draft = newDraft();
+  editingClient = state.clients[0]?.id; save(); renderClients(); renderInvoice(); refreshPreview();
+};
+$('#cl-invoice').onclick = () => {
+  const keep = state.draft.number;
+  state.draft = newDraft(editingClient); state.draft.number = keep;
+  save(); renderInvoice(); refreshPreview(); go('invoice');
+};
+
+// ---------- me tab ----------
+function renderMe() {
+  $$('[data-me]').forEach(el => el.value = state.me[el.dataset.me] ?? '');
+  $$('[data-set]').forEach(el => el.value = state.settings[el.dataset.set] ?? '');
+}
+$$('[data-me]').forEach(el => el.oninput = () => { state.me[el.dataset.me] = el.value; save(); refreshPreview(); });
+$$('[data-set]').forEach(el => (el.tagName === 'SELECT' ? el : el).addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => {
+  state.settings[el.dataset.set] = el.type === 'number' ? Number(el.value) : el.value;
+  save(); refreshPreview();
+}));
+$('#export').onclick = () => {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = `invoicer-backup-${iso(new Date())}.json`; a.click();
+};
+$('#import').onclick = () => $('#import-file').click();
+$('#import-file').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  f.text().then(txt => {
+    try {
+      const s = JSON.parse(txt);
+      if (!s.me || !Array.isArray(s.clients)) throw 0;
+      if (!confirm('Replace all current data with this backup?')) return;
+      state = s; if (!state.draft) state.draft = newDraft(); state.history ||= [];
+      editingClient = state.clients[0]?.id; save(); renderAll(); toast('Backup imported');
+    } catch (err) { toast("That file isn't an Invoicer backup"); }
+  });
+  e.target.value = '';
+};
+
+// ---------- history tab ----------
+function renderHistory() {
+  $('#hist-empty').style.display = state.history.length ? 'none' : '';
+  $('#hist').innerHTML = state.history.map(h =>
+    `<tr><td>${esc(h.inv.number)}</td><td>${esc(h.c.company)}</td><td>${esc(h.inv.date)}</td>
+     <td class="num">${esc(money(total(h.inv.items), h.c.currency))}</td>
+     <td class="num"><button class="btn" data-dl="${h.id}">PDF</button> <button class="btn" data-copy="${h.id}" title="Start a new invoice with these lines">Copy</button>
+     <button class="x" data-del="${h.id}" title="Remove from history">×</button></td></tr>`).join('');
+}
+$('#hist').onclick = e => {
+  const id = e.target.dataset.dl || e.target.dataset.copy || e.target.dataset.del;
+  const h = state.history.find(x => x.id === id); if (!h) return;
+  if (e.target.dataset.dl) {
+    buildPdf({ me: h.me, c: h.c, inv: h.inv, pageSize: h.pageSize }).save(fileName(h.c, h.inv, h.me));
+  } else if (e.target.dataset.copy) {
+    state.draft = newDraft(client(h.c.id) ? h.c.id : undefined);
+    state.draft.items = clone(h.inv.items);
+    save(); renderInvoice(); refreshPreview(); go('invoice');
+  } else if (confirm(`Remove ${h.inv.number} from history?`)) {
+    state.history = state.history.filter(x => x.id !== id); save(); renderHistory();
+  }
+};
+
+// ---------- misc ----------
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, ch => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[ch])); }
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), 2200); }
+function go(tab) {
+  $$('section[data-tab]').forEach(s => s.classList.toggle('show', s.dataset.tab === tab));
+  $$('nav button').forEach(b => b.classList.toggle('active', b.dataset.go === tab));
+  if (tab === 'clients') renderClients();
+}
+$$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
+function renderAll() { renderInvoice(); renderClients(); renderMe(); renderHistory(); refreshPreview(); }
+renderAll();
+if (!window.jspdf) $('#preview').srcdoc = '<p style="color:#fff;font:14px sans-serif;padding:20px">Could not load the PDF library. Check your internet connection and reload.</p>';
+</script>
+</body>
+</html>

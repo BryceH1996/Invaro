@@ -112,7 +112,8 @@ async function publishGithubRelease() {
       ...opts, headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'invoicer-release', ...(opts.headers || {}) },
     });
     if (!res.ok && res.status !== 404) throw new Error(`GitHub ${res.status}: ${(await res.text()).slice(0, 300)}`);
-    return res.status === 404 ? null : res.json();
+    if (res.status === 404) return null;
+    return res.status === 204 ? {} : res.json();
   };
   let release = await gh(`/releases/tags/${tag}`);
   if (!release) {
@@ -133,23 +134,73 @@ async function publishGithubRelease() {
     console.log(`✔ Attached the installer to ${tag}`);
   }
 
-  // Release notes: what changed, then the download's SHA-256 and its VirusTotal result.
-  const sha256 = require('crypto').createHash('sha256').update(bytes).digest('hex');
-  const scan = await virusTotal(bytes, sha256, assetName).catch(e => { console.warn(`⚠ VirusTotal check failed: ${e.message}`); return null; });
+  // The Mac version is built by GitHub Actions (.github/workflows/mac.yml) once the release exists.
+  const macNames = ['dmg', 'zip'].map(ext => `${pkg.build.productName}-${pkg.version}-mac.${ext}`);
+  release = await waitForMac(gh, release, macNames);
+
+  // Release notes: what changed, then each download with its SHA-256 and VirusTotal result.
+  const crypto = require('crypto');
+  const files = [{ name: assetName, bytes, url: (release.assets.find(a => a.name === assetName) || {}).browser_download_url }];
+  for (const name of macNames) {
+    const a = release.assets.find(x => x.name === name);
+    if (!a) continue;
+    const res = await fetch(a.browser_download_url, { headers: { 'User-Agent': 'invoicer-release' } });
+    if (!res.ok) { console.warn(`⚠ Couldn't download ${name} to check it (${res.status}).`); continue; }
+    files.push({ name, bytes: Buffer.from(await res.arrayBuffer()), url: a.browser_download_url });
+  }
+  for (const f of files) f.sha256 = crypto.createHash('sha256').update(f.bytes).digest('hex');
+  // Scan what people download by hand: the Windows installer and the Mac disk image.
+  for (const f of files.filter(f => !f.name.endsWith('.zip'))) {
+    f.scan = await virusTotal(f.bytes, f.sha256, f.name).catch(e => { console.warn(`⚠ VirusTotal check of ${f.name} failed: ${e.message}`); return null; });
+  }
+  const mb = f => `${(f.bytes.length / 1048576).toFixed(1)} MB`;
+  const win = files[0], dmg = files.find(f => f.name.endsWith('.dmg'));
   const intro = (release.body || '').split('\n\n### Download')[0].trim() || notes || `Invoicer ${pkg.version}`;
+  const scanned = files.filter(f => f.scan);
   const body = [
     intro, '', '### Download',
-    `**${assetName}** (${(bytes.length / 1048576).toFixed(1)} MB). Windows may warn that it's from an unknown publisher, because the app isn't code-signed yet: click **More info → Run anyway**.`,
-    '', `SHA-256: \`${sha256}\``,
-    '', 'To check your download matches, run this in PowerShell in the folder you saved it to, and compare:',
-    '```powershell', `Get-FileHash .\\${assetName}`, '```',
-    ...(scan ? ['', `VirusTotal: ${scan.flagged} of ${scan.engines} security vendors flagged this file. [See the report](${scan.url})`] : []),
+    `- **Windows:** [${win.name}](${win.url}) (${mb(win)}). Windows may warn that it's from an unknown publisher, because the app isn't code-signed yet: click **More info → Run anyway**.`,
+    ...(dmg ? [`- **Mac** (Apple silicon and Intel): [${dmg.name}](${dmg.url}) (${mb(dmg)}). Open it and drag Invoicer into Applications. The first time you open it, macOS says it can't check the app for malware, because it isn't signed by Apple: open **System Settings → Privacy & Security**, scroll down and click **Open Anyway**.`] : []),
+    '', '### Checksums (SHA-256)', '', '| File | SHA-256 |', '| --- | --- |',
+    ...files.map(f => `| ${f.name} | \`${f.sha256}\` |`),
+    '', 'To check a download, run `Get-FileHash .\\<file>` in PowerShell on Windows, or `shasum -a 256 <file>` in Terminal on a Mac, and compare it with the table. (The `.zip` is what installed Macs use to update themselves.)',
+    ...(scanned.length ? ['', '### VirusTotal', ...scanned.map(f => `- ${f.name}: ${f.scan.flagged} of ${f.scan.engines} security vendors flagged it. [See the report](${f.scan.url})`)] : []),
   ].join('\n');
   if (body !== release.body) {
     await gh(`/releases/${release.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body }) });
-    console.log(`✔ Release notes updated (SHA-256${scan ? ', VirusTotal' : ''})`);
+    console.log(`✔ Release notes updated (${files.length} file${files.length === 1 ? '' : 's'}, SHA-256${scanned.length ? ', VirusTotal' : ''})`);
   }
   console.log(`  ${release.html_url}`);
+}
+
+// Waits (up to 45 minutes) for the Mac build to attach its files, and returns the refreshed release.
+// If no build has started for this tag (e.g. a --github-only rerun), it starts one.
+async function waitForMac(gh, release, names) {
+  const has = r => names.every(n => r.assets.some(a => a.name === n));
+  if (has(release)) return release;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const started = Date.now();
+  let dispatched = false;
+  process.stdout.write('Waiting for the Mac build on GitHub');
+  while (Date.now() - started < 45 * 60 * 1000) {
+    await sleep(30000); process.stdout.write('.');
+    release = await gh(`/releases/${release.id}`);
+    if (has(release)) { console.log(''); console.log('✔ Mac build attached'); return release; }
+    const runs = ((await gh('/actions/workflows/mac.yml/runs?per_page=20')) || {}).workflow_runs || [];
+    const run = runs.find(r => r.head_branch === tag || (r.display_title || '').includes(tag));
+    if (!run && !dispatched && Date.now() - started > 90 * 1000) {
+      await gh('/actions/workflows/mac.yml/dispatches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: 'main', inputs: { tag } }) });
+      dispatched = true;
+    }
+    if (run && run.status === 'completed' && run.conclusion !== 'success') {
+      console.log('');
+      console.warn(`⚠ The Mac build failed: ${run.html_url}\n  Fix it, then rerun with:  npm run release -- --github-only`);
+      return release;
+    }
+  }
+  console.log('');
+  console.warn('⚠ The Mac build is taking too long. Rerun later with:  npm run release -- --github-only');
+  return release;
 }
 
 // ---- VirusTotal scan of the installer ----

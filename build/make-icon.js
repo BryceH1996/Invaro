@@ -1,9 +1,9 @@
-// Generates build/icon.png (256x256) with no dependencies. Run: node build/make-icon.js
+// Generates build/icon.png (1024x1024, as macOS needs at least 512) with no dependencies. Run: node build/make-icon.js
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 
-const S = 256, SS = 4; // size, supersampling
+const S = 1024, SS = 2, K = S / 256; // size, supersampling; shapes below are in 256-unit design coordinates
 const GOLD = [191, 144, 0], WHITE = [255, 255, 255], LIGHT = [255, 229, 153], LINE = [214, 190, 120];
 
 function inRoundRect(x, y, x0, y0, x1, y1, r) {
@@ -29,7 +29,7 @@ for (let y = 0; y < S; y++) {
   for (let x = 0; x < S; x++) {
     let r = 0, g = 0, b = 0, a = 0;
     for (let sy = 0; sy < SS; sy++) for (let sx = 0; sx < SS; sx++) {
-      const p = { x: x + (sx + 0.5) / SS, y: y + (sy + 0.5) / SS };
+      const p = { x: (x + (sx + 0.5) / SS) / K, y: (y + (sy + 0.5) / SS) / K };
       let col = null;
       for (const [hit, c] of shapes) if (hit(p)) col = c;
       if (col) { r += col[0]; g += col[1]; b += col[2]; a += 255; }

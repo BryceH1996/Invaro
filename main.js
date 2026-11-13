@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, powerMonitor, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn, execFile } = require('child_process');
 app.setName('Invoicer');
+const IS_MAC = process.platform === 'darwin', IS_WIN = process.platform === 'win32';
 // Tests run with their own profile so they never clash with the installed app.
 if (process.env.INVOICER_PROFILE) app.setPath('userData', process.env.INVOICER_PROFILE);
 // Started by Windows Task Scheduler to check reminders: no window unless a notification is clicked.
@@ -11,7 +12,7 @@ if (process.env.INVOICER_PROFILE) app.setPath('userData', process.env.INVOICER_P
 const CHECK_ONLY = process.argv.includes('--check-reminders') || process.argv.includes('--hidden');
 // One copy at a time: starting Invoicer again shows the open window (or just runs the check).
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
-if (app.isPackaged) app.setAppUserModelId('local.invoicer.app'); // needed for Windows notifications
+if (app.isPackaged && IS_WIN) app.setAppUserModelId('local.invoicer.app'); // needed for Windows notifications
 const ICON = path.join(__dirname, 'build', 'icon.png');
 
 // Data lives as plain JSON in a folder the user picks (default: Documents\Invoicer).
@@ -189,7 +190,15 @@ const BACKUP_FOLDER = 'Invoicer Backups';
 const isDir = p => { try { return fs.statSync(p).isDirectory(); } catch (e) { return false; } };
 function findMyDrive() {
   if (process.env.INVOICER_MYDRIVE) return isDir(process.env.INVOICER_MYDRIVE) ? process.env.INVOICER_MYDRIVE : null;
-  const candidates = [...'GDEFHIJKLMNOPQRSTUVWXYZ'].map(l => `${l}:\\My Drive`);
+  const candidates = [];
+  if (IS_MAC) {
+    // Google Drive for desktop on macOS: ~/Library/CloudStorage/GoogleDrive-<account>/My Drive
+    const cloud = path.join(os.homedir(), 'Library', 'CloudStorage');
+    try { for (const f of fs.readdirSync(cloud)) if (f.startsWith('GoogleDrive')) candidates.push(path.join(cloud, f, 'My Drive')); } catch (e) {}
+    candidates.push('/Volumes/GoogleDrive/My Drive', path.join(os.homedir(), 'Google Drive', 'My Drive'));
+  } else {
+    candidates.push(...[...'GDEFHIJKLMNOPQRSTUVWXYZ'].map(l => `${l}:\\My Drive`));
+  }
   candidates.push(path.join(os.homedir(), 'My Drive'));
   return candidates.find(isDir) || null;
 }
@@ -277,6 +286,7 @@ function compareVersions(a, b) {
   return 0;
 }
 function findUpdate() {
+  if (!IS_WIN) return null; // the updates folder only ever holds the Windows installer
   try {
     const info = JSON.parse(fs.readFileSync(path.join(updatesDir(), 'latest.json'), 'utf8'));
     const installer = path.join(updatesDir(), path.basename(info.file || ''));
@@ -298,7 +308,8 @@ async function githubLatest() {
   if (res.status === 404) return null; // no releases yet
   if (!res.ok) throw new Error(`GitHub said ${res.status}.`);
   const r = await res.json();
-  const asset = (r.assets || []).find(a => /\.exe$/i.test(a.name));
+  // Windows updates with the installer; macOS with the zipped app (the .dmg is for first installs).
+  const asset = (r.assets || []).find(a => (IS_MAC ? /-mac\.zip$/i : /\.exe$/i).test(a.name));
   return asset ? { version: String(r.tag_name).replace(/^v/, ''), notes: r.body || '', source: 'github', asset: asset.browser_download_url, name: asset.name, size: asset.size } : null;
 }
 // Downloads a release installer to the temp folder, reporting progress to the window.
@@ -334,9 +345,42 @@ ipcMain.handle('update:check', async () => {
   offered = await bestUpdate();
   return offered && { version: offered.version, notes: offered.notes, current: app.getVersion() };
 });
+// ---- macOS: replace the .app in place ----
+// The update is the zipped app. It's unpacked next to the temp folder, and a small shell script
+// swaps it in once Invoicer has quit, then opens the new version.
+const run = (cmd, args) => new Promise((ok, bad) => execFile(cmd, args, (err, out, errOut) => err ? bad(new Error(String(errOut || err.message).trim())) : ok(String(out))));
+const macAppBundle = () => path.resolve(process.execPath, '..', '..', '..'); // …/Invoicer.app/Contents/MacOS/Invoicer
+function macUpdateProblem() {
+  const appPath = macAppBundle();
+  if (!appPath.endsWith('.app')) return "Invoicer isn't running from an app, so it can't update itself.";
+  if (appPath.includes('/AppTranslocation/') || appPath.startsWith('/Volumes/')) return 'Move Invoicer into your Applications folder and open it from there, then update.';
+  try { fs.accessSync(path.dirname(appPath), fs.constants.W_OK); }
+  catch (e) { return `Invoicer can't replace itself in ${path.dirname(appPath)}. Download the new version from the releases page instead.`; }
+  return null;
+}
+async function installMacUpdate(zip) {
+  const problem = macUpdateProblem();
+  if (problem) throw new Error(problem);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invoicer-update-'));
+  await run('/usr/bin/ditto', ['-x', '-k', zip, dir]);
+  const fresh = fs.readdirSync(dir).find(f => f.endsWith('.app'));
+  if (!fresh) throw new Error('The download had no app in it.');
+  const script = path.join(dir, 'swap.sh');
+  fs.writeFileSync(script, [
+    '#!/bin/sh',
+    '# $1 = pid to wait for, $2 = installed app, $3 = new app',
+    'while kill -0 "$1" 2>/dev/null; do sleep 0.3; done',
+    'rm -rf "$2.old" && mv "$2" "$2.old" && mv "$3" "$2" && rm -rf "$2.old"',
+    'xattr -dr com.apple.quarantine "$2" 2>/dev/null',
+    'open "$2"',
+  ].join('\n'));
+  spawn('/bin/sh', [script, String(process.pid), macAppBundle(), path.join(dir, fresh)], { detached: true, stdio: 'ignore' }).unref();
+}
+
 ipcMain.handle('update:install', safe(async () => {
   const u = offered || await bestUpdate();
   if (!u) return false;
+  if (IS_MAC && !process.env.INVOICER_UPDATE_TEST && macUpdateProblem()) throw new Error(macUpdateProblem());
   let tmp;
   if (u.source === 'github') tmp = await downloadAsset(u);
   else {
@@ -345,7 +389,8 @@ ipcMain.handle('update:install', safe(async () => {
     fs.copyFileSync(u.installer, tmp);
   }
   if (process.env.INVOICER_UPDATE_TEST) return { downloaded: tmp, size: fs.statSync(tmp).size }; // tests stop here
-  spawn(tmp, ['/S', '--force-run'], { detached: true, stdio: 'ignore' }).unref();
+  if (IS_MAC) await installMacUpdate(tmp);
+  else spawn(tmp, ['/S', '--force-run'], { detached: true, stdio: 'ignore' }).unref();
   setTimeout(() => app.quit(), 300);
   return true;
 }));
@@ -442,19 +487,24 @@ function checkReminders() {
 // A check-only run quits once there's no window and no notification waiting to be clicked.
 function quitIfIdle() { if (CHECK_ONLY && !win && !shown.size) app.quit(); }
 
-// ---------- Windows Task Scheduler ----------
-// While any client has a reminder, a scheduled task runs "Invoicer --check-reminders" every
-// day at 9am (or as soon as the PC is on and you're signed in, if it was off at 9). With no
-// reminders left, the task is deleted. The uninstaller deletes it too (build/installer.nsh).
+// ---------- the daily reminder check (Windows Task Scheduler / macOS launchd) ----------
+// While any client has a reminder, the system runs "Invoicer --check-reminders" every day at 9am
+// (or as soon as the computer is on and you're signed in, if it was off at 9). With no reminders
+// left, it's removed. On Windows the uninstaller removes it too (build/installer.nsh).
 const TASK = process.env.INVOICER_TASK_NAME || 'Invoicer reminders';
-const taskEnabled = () => app.isPackaged || !!process.env.INVOICER_TASK_NAME;
+// In development the executable is Electron itself, which needs the app folder as its first argument.
+const checkArgs = () => [...(app.isPackaged ? [] : [app.getAppPath()]), '--check-reminders'];
+const xmlEsc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
 const schtasks = args => new Promise(resolve =>
   execFile('schtasks.exe', args, { windowsHide: true }, (err, stdout, stderr) => resolve({ ok: !err, out: String(stdout || stderr || (err && err.message) || '') })));
-const xmlEsc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-function taskXml() {
-  // In development the exe is electron.exe, which needs the app folder as its first argument.
-  const args = (app.isPackaged ? '' : `"${app.getAppPath()}" `) + '--check-reminders';
-  return `<?xml version="1.0" encoding="UTF-16"?>
+const windowsScheduler = {
+  name: 'Windows Task Scheduler',
+  problem: () => null,
+  exists: async () => (await schtasks(['/query', '/tn', TASK])).ok,
+  async create() {
+    const args = checkArgs().map(a => a.startsWith('--') ? a : `"${a}"`).join(' ');
+    const xml = `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Description>Shows Invoicer's invoice reminders. Created by Invoicer and deleted when no client has a reminder.</Description></RegistrationInfo>
   <Triggers>
@@ -471,31 +521,82 @@ function taskXml() {
   </Settings>
   <Actions Context="Author"><Exec><Command>${xmlEsc(process.execPath)}</Command><Arguments>${xmlEsc(args)}</Arguments></Exec></Actions>
 </Task>`;
-}
+    const xmlFile = path.join(os.tmpdir(), `invoicer-task-${process.pid}.xml`);
+    fs.writeFileSync(xmlFile, Buffer.from('﻿' + xml, 'utf16le'));
+    const r = await schtasks(['/create', '/tn', TASK, '/xml', xmlFile, '/f']);
+    fs.rmSync(xmlFile, { force: true });
+    if (!r.ok) throw new Error(r.out);
+  },
+  async remove() {
+    const r = await schtasks(['/delete', '/tn', TASK, '/f']);
+    if (!r.ok && await this.exists()) throw new Error(r.out);
+  },
+  async info() {
+    const q = await schtasks(['/query', '/tn', TASK, '/fo', 'list', '/v']);
+    if (!q.ok) return { exists: false };
+    const field = name => (q.out.match(new RegExp('^' + name + ':\\s*(.+)$', 'mi')) || [])[1];
+    return { exists: true, nextRun: field('Next Run Time') };
+  },
+};
+
+// macOS: a LaunchAgent in ~/Library/LaunchAgents, loaded into your login session.
+const LABEL = process.env.INVOICER_TASK_NAME ? 'local.invoicer.reminders-test' : 'local.invoicer.reminders';
+const plistPath = () => path.join(os.homedir(), 'Library', 'LaunchAgents', `${LABEL}.plist`);
+const launchctl = args => new Promise(resolve => execFile('/bin/launchctl', args, err => resolve(!err)));
+const macScheduler = {
+  name: 'launchd',
+  // A copy run straight from the download (or the disk image) lives at a temporary path, which a
+  // daily job can't point at. macOS fixes that once the app is in Applications.
+  problem: () => app.isPackaged && (process.execPath.includes('/AppTranslocation/') || process.execPath.startsWith('/Volumes/'))
+    ? 'Move Invoicer into your Applications folder and open it from there to turn on reminders while it\'s closed.' : null,
+  exists: async () => fs.existsSync(plistPath()),
+  async create() {
+    const programArgs = [process.execPath, ...checkArgs()].map(a => `    <string>${xmlEsc(a)}</string>`).join('\n');
+    fs.mkdirSync(path.dirname(plistPath()), { recursive: true });
+    fs.writeFileSync(plistPath(), `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+${programArgs}
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+  <key>RunAtLoad</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
+</dict>
+</plist>
+`);
+    const domain = `gui/${process.getuid()}`;
+    await launchctl(['bootout', `${domain}/${LABEL}`]); // replace any older copy
+    if (!await launchctl(['bootstrap', domain, plistPath()])) throw new Error('launchctl could not load the reminder job');
+  },
+  async remove() {
+    await launchctl(['bootout', `gui/${process.getuid()}/${LABEL}`]);
+    fs.rmSync(plistPath(), { force: true });
+  },
+  async info() { return { exists: fs.existsSync(plistPath()), nextRun: 'every day at 9:00, and when you log in' }; },
+};
+
+const scheduler = IS_WIN ? windowsScheduler : IS_MAC ? macScheduler : null;
+const taskEnabled = () => !!scheduler && (app.isPackaged || !!process.env.INVOICER_TASK_NAME);
 let taskSync = Promise.resolve();
-// Creates or deletes the task to match the clients. `verify` also asks Windows whether the task
-// exists (on start-up, in case it was deleted by hand); otherwise the last result is trusted.
+// Creates or removes the scheduled check to match the clients. `verify` also asks the system whether
+// it exists (on start-up, in case it was deleted by hand); otherwise the last result is trusted.
 function syncReminderTask(verify) {
   if (!taskEnabled()) return taskSync;
   taskSync = taskSync.then(async () => {
-    const want = remindersOn() ? process.execPath : null;
+    const want = remindersOn() && !scheduler.problem() ? process.execPath : null;
     let have = readReminderState().task || null;
     if (verify) {
-      const q = await schtasks(['/query', '/tn', TASK]);
-      if (!q.ok) have = null;
-      else if (!have) have = 'unknown'; // exists, but not one we recorded: rewrite or delete it
+      if (!await scheduler.exists()) have = null;
+      else if (!have) have = 'unknown'; // exists, but not one we recorded: rewrite or remove it
     }
     if (want === have) return;
-    if (want) {
-      const xmlFile = path.join(os.tmpdir(), `invoicer-task-${process.pid}.xml`);
-      fs.writeFileSync(xmlFile, Buffer.from('﻿' + taskXml(), 'utf16le'));
-      const r = await schtasks(['/create', '/tn', TASK, '/xml', xmlFile, '/f']);
-      fs.rmSync(xmlFile, { force: true });
-      if (!r.ok) { console.error('Could not create the reminder task:', r.out); return; }
-    } else {
-      const r = await schtasks(['/delete', '/tn', TASK, '/f']);
-      if (!r.ok) { console.error('Could not delete the reminder task:', r.out); return; }
-    }
+    try { await (want ? scheduler.create() : scheduler.remove()); }
+    catch (e) { console.error(`Could not ${want ? 'set up' : 'remove'} the reminder check:`, e.message); return; }
     writeReminderState({ ...readReminderState(), task: want });
   });
   return taskSync;
@@ -508,17 +609,14 @@ function remindersChanged() {
 }
 ipcMain.handle('reminders:due', () => dueReminders());
 ipcMain.handle('reminders:overview', () => reminderOverview());
-// Whether the Windows scheduled task is there, and when it runs next.
+// Whether the daily reminder check is set up, and when it runs next.
 ipcMain.handle('reminders:task', async () => {
-  if (!taskEnabled()) return { enabled: false };
-  await syncReminderTask(true); // finish any pending change, and put the task back if it went missing
-  const q = await schtasks(['/query', '/tn', TASK, '/fo', 'list', '/v']);
-  if (!q.ok) return { enabled: true, exists: false };
-  const field = name => (q.out.match(new RegExp('^' + name + ':\\s*(.+)$', 'mi')) || [])[1];
-  return { enabled: true, exists: true, nextRun: field('Next Run Time'), lastRun: field('Last Run Time') };
+  if (!taskEnabled()) return { enabled: false, platform: process.platform };
+  await syncReminderTask(true); // finish any pending change, and put the check back if it went missing
+  return { enabled: true, platform: process.platform, problem: scheduler.problem(), ...await scheduler.info() };
 });
 ipcMain.handle('reminders:test', () => {
-  if (!Notification.isSupported()) return { error: "This version of Windows doesn't support notifications." };
+  if (!Notification.isSupported()) return { error: "This computer doesn't support notifications." };
   new Notification({ title: 'Invoicer reminders are working', body: "This is how you'll be reminded to invoice a client.", icon: ICON }).show();
   return {};
 });
@@ -536,7 +634,10 @@ app.on('second-instance', (_e, argv) => {
 app.whenReady().then(async () => {
   DATA_DIR = resolveDataDir();
   // 1.6.0 started Invoicer with Windows to sit in the tray; the scheduled task replaces that.
-  if (app.isPackaged && app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin) app.setLoginItemSettings({ openAtLogin: false, args: ['--hidden'] });
+  if (app.isPackaged && IS_WIN && app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin) app.setLoginItemSettings({ openAtLogin: false, args: ['--hidden'] });
+  // macOS: the usual app, Edit (for copy and paste) and Window menus. No View menu, so ⌘+ / ⌘− zoom
+  // the invoice preview rather than the whole window.
+  if (IS_MAC) Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }]));
   if (CHECK_ONLY) {
     await syncReminderTask(true);
     if (!checkReminders()) return app.quit();
@@ -552,4 +653,9 @@ app.whenReady().then(async () => {
   powerMonitor.on('unlock-screen', checkReminders);
 });
 // A check-only run stays up without a window while a notification is waiting to be clicked.
-app.on('window-all-closed', () => { if (!CHECK_ONLY || !shown.size) app.quit(); });
+// On macOS, closing the window leaves the app in the Dock, as Mac apps usually do.
+app.on('window-all-closed', () => {
+  if (CHECK_ONLY) { if (!shown.size) app.quit(); return; }
+  if (!IS_MAC) app.quit();
+});
+app.on('activate', () => { if (app.isReady() && !CHECK_ONLY) showWindow(); });

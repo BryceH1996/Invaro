@@ -198,9 +198,12 @@ function setZoom(z) {
 $('#zoom-in').onclick = () => zoomBy(1);
 $('#zoom-out').onclick = () => zoomBy(-1);
 $('#zoom-level').onclick = () => setZoom(null);
-// Ctrl + / Ctrl − / Ctrl 0 (the PDF viewer handles Ctrl+wheel itself until the next refresh).
+// Ctrl (⌘ on a Mac) + / − / 0 (the PDF viewer handles Ctrl+wheel itself until the next refresh).
+const IS_MAC = (window.api && window.api.platform) === 'darwin';
+const MOD = IS_MAC ? '⌘' : 'Ctrl+';
+$$('.zoom [data-key]').forEach(b => { b.title += ` (${MOD}${b.dataset.key})`; });
 window.addEventListener('keydown', e => {
-  if (!e.ctrlKey || e.altKey) return;
+  if (!(IS_MAC ? e.metaKey : e.ctrlKey) || e.altKey) return;
   if (e.key === '+' || e.key === '=') zoomBy(1);
   else if (e.key === '-') zoomBy(-1);
   else if (e.key === '0') setZoom(null);
@@ -363,7 +366,7 @@ async function savePdf(entry) {
   const path = res.path;
   entry.file = path;
   if (window.api) {
-    const shown = path.split(/[\\/]/).slice(-2).join('\\'); // e.g. "Client\Client Invoice - ….pdf"
+    const shown = path.split(/[\\/]/).slice(-2).join(IS_MAC ? '/' : '\\'); // e.g. "Client\Client Invoice - ….pdf"
     if (await backupPdf(entry, bytes)) toast(`Saved to ${shown} and backed up to Google Drive`, 'Open', () => store.open(path));
     else toast(`Saved to ${shown}, but NOT backed up: ${entry.backupError}. It will retry automatically.`, 'Open', () => store.open(path));
   }
@@ -471,15 +474,20 @@ async function renderNotifications() {
 async function renderTaskStatus(anyOn) {
   const el = $('#rem-task');
   const t = await store.reminderTask();
-  if (!t.enabled) { el.className = 'drive-status'; el.textContent = 'The Windows scheduled task is only set up by the installed app.'; }
-  else if (t.exists) { el.className = 'drive-status on'; el.textContent = `Windows reminder task is on. Next check: ${t.nextRun || 'unknown'}.`; }
-  else if (anyOn) { el.className = 'drive-status err'; el.textContent = "Couldn't set up the Windows reminder task, so reminders only appear while Invoicer is open."; }
-  else { el.className = 'drive-status'; el.textContent = 'No reminders set, so there is no Windows task.'; }
+  if (!t.enabled) { el.className = 'drive-status'; el.textContent = 'The daily check is only set up by the installed app.'; }
+  else if (t.problem && anyOn) { el.className = 'drive-status err'; el.textContent = t.problem; }
+  else if (t.exists) { el.className = 'drive-status on'; el.textContent = `The daily reminder check is on. Next check: ${t.nextRun || 'unknown'}.`; }
+  else if (anyOn) { el.className = 'drive-status err'; el.textContent = "Couldn't set up the daily reminder check, so reminders only appear while Invoicer is open."; }
+  else { el.className = 'drive-status'; el.textContent = 'No reminders set, so nothing is scheduled.'; }
 }
+// How reminders work while Invoicer is closed, in this computer's terms.
+$('#rem-how').textContent = IS_MAC
+  ? 'Invoicer doesn\'t need to be open. While any client has a reminder, macOS runs a quick check every day at 9am and when you log in, using a launch agent called "local.invoicer.reminders". Turning off every reminder removes it. If you delete Invoicer, turn your reminders off first.'
+  : 'Invoicer doesn\'t need to be open. While any client has a reminder, a Windows Task Scheduler task called "Invoicer reminders" checks every day at 9am, or as soon as your PC is on if it was off then. Turning off every reminder, or uninstalling Invoicer, removes that task.';
 async function setReminder(id, day) {
   const c = client(id); if (!c) return;
   c.reminderDay = day;
-  persist('clients'); await flushSaves(); // saved now, so Windows' task is updated straight away
+  persist('clients'); await flushSaves(); // saved now, so the scheduled check is updated straight away
   if (editingClient === id) $('#cl-reminder').textContent = reminderLabel(day) + '.';
   renderNotifications();
 }
@@ -491,10 +499,10 @@ $('#rem-list').onclick = async e => {
 };
 $('#rem-test').onclick = async () => {
   const r = await store.testNotification();
-  toast(r && r.error ? r.error : "Test notification sent. If you didn't see it, check Windows Settings → System → Notifications.");
+  toast(r && r.error ? r.error : `Test notification sent. If you didn't see it, check ${IS_MAC ? 'System Settings → Notifications → Invoicer' : 'Windows Settings → System → Notifications'}.`);
 };
 $('#rem-all-off').onclick = async () => {
-  if (!confirm('Turn off invoice reminders for every client? This also removes the Windows scheduled task.')) return;
+  if (!confirm('Turn off invoice reminders for every client? This also removes the daily reminder check.')) return;
   clients.forEach(c => { c.reminderDay = ''; });
   persist('clients'); await flushSaves();
   renderClients(); renderNotifications();

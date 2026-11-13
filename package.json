@@ -11,6 +11,7 @@
     "start": "electron .",
     "icon": "node build/make-icon.js",
     "dist": "electron-builder --win nsis --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
     "release": "node scripts/release.js"
   },
   "dependencies": {
@@ -46,6 +47,21 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Invoicer",
       "include": "build/installer.nsh"
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["universal"] },
+        { "target": "zip", "arch": ["universal"] }
+      ],
+      "icon": "build/icon.png",
+      "category": "public.app-category.business",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "artifactName": "${productName}-${version}-mac.${ext}"
+    },
+    "dmg": {
+      "artifactName": "${productName}-${version}-mac.${ext}"
     }
   }
 }

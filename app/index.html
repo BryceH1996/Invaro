@@ -170,15 +170,15 @@
     <!-- NOTIFICATIONS -->
     <section data-tab="notifications">
       <h2>Notifications</h2>
-      <p class="muted">Pick a day for each client you want reminding about. From that day, Windows shows a notification once a day until you save an invoice for the client (one saved in the week before counts too), or you skip the month.</p>
+      <p class="muted">Pick a day for each client you want reminding about. From that day, your computer shows a notification once a day until you save an invoice for the client (one saved in the week before counts too), or you skip the month.</p>
       <table class="reminders">
         <thead><tr><th>Client</th><th>Remind me</th><th>This month</th><th>Next reminder</th></tr></thead>
         <tbody id="rem-list"></tbody>
       </table>
       <p class="muted" id="rem-empty">Add a client on the Clients tab first.</p>
-      <h3>Windows</h3>
+      <h3>While Invoicer is closed</h3>
       <p class="drive-status" id="rem-task">Checking…</p>
-      <p class="muted">Invoicer doesn't need to be open. While any client has a reminder, a Windows Task Scheduler task called "Invoicer reminders" checks every day at 9am, or as soon as your PC is on if it was off then. Turning off every reminder, or uninstalling Invoicer, removes that task.</p>
+      <p class="muted" id="rem-how"></p>
       <div class="actions">
         <button class="btn" id="rem-test">Send a test notification</button>
         <button class="btn" id="rem-all-off">Turn all reminders off</button>
@@ -199,9 +199,9 @@
   <div class="preview">
     <iframe id="preview" title="Invoice preview"></iframe>
     <div class="zoom">
-      <button id="zoom-out" title="Zoom out (Ctrl+−)">−</button>
-      <button id="zoom-level" title="Fit to width (Ctrl+0)"></button>
-      <button id="zoom-in" title="Zoom in (Ctrl++)">+</button>
+      <button id="zoom-out" title="Zoom out" data-key="−">−</button>
+      <button id="zoom-level" title="Fit to width" data-key="0"></button>
+      <button id="zoom-in" title="Zoom in" data-key="+">+</button>
     </div>
   </div>
 </main>

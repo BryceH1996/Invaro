@@ -1,0 +1,50 @@
+# Builds the macOS version for each release and attaches it to the release.
+# Releases are created from Windows by `npm run release` (Mac apps can only be built on a Mac),
+# which then waits for this to finish before writing the checksums into the release notes.
+name: Mac build
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build, e.g. v1.10.0
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    # Only the public repo has the releases people download from.
+    if: github.repository == 'BryceH1996/invoicer'
+    runs-on: macos-latest
+    timeout-minutes: 40
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build the universal app (Apple silicon and Intel)
+        run: npx electron-builder --mac --publish never
+
+      - name: Check the signature
+        run: codesign --verify --deep --verbose=2 "dist/mac-universal/Invoicer.app"
+
+      - name: Smoke test
+        run: node scripts/mac-smoke-test.js "dist/mac-universal/Invoicer.app"
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/*-mac.dmg dist/*-mac.zip --clobber --repo "$GITHUB_REPOSITORY"

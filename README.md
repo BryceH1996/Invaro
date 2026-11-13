@@ -12,7 +12,7 @@ A small, no-fuss app for Windows and Mac, for freelancers who invoice the same c
 
 To remove it, go to **Settings → Apps → Installed apps → Invoicer → Uninstall**.
 
-**Mac** (Apple silicon and Intel, macOS 11 or later)
+**Mac** (Apple silicon and Intel, macOS 12 Monterey or later)
 1. Download `Invoicer-<version>-mac.dmg` from the [latest release](https://github.com/BryceH1996/invoicer/releases/latest), open it, and drag **Invoicer** into **Applications**.
 2. Open Invoicer from Applications. Because it isn't signed by Apple, macOS first says it can't check the app for malware. Click **Done**, then open **System Settings → Privacy & Security**, scroll down to "Invoicer was blocked…", click **Open Anyway**, and confirm. You only need to do this once.
 

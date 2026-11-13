@@ -83,9 +83,9 @@ function releaseLocally() {
   try {
     git('push -q origin main', { stdio: ['ignore', 'pipe', 'pipe'] });
     git(`push -q origin ${tag}`, { stdio: ['ignore', 'pipe', 'pipe'] });
-    git('push -q public main', { stdio: ['ignore', 'pipe', 'pipe'] });
-    git(`push -q public ${tag}`, { stdio: ['ignore', 'pipe', 'pipe'] });
-    console.log(`✔ Pushed main and ${tag} to GitHub (private and public repos)`);
+    console.log(`✔ Pushed main and ${tag} to the private repo`);
+    publishPublic();
+    console.log(`✔ Published main and ${tag} to the public repo, without: ${(pkg.privateFiles || []).join(', ') || 'nothing'}`);
     return true;
   } catch (e) {
     console.warn(`\n⚠ The update is published, but pushing to GitHub failed:\n${(e.stderr || e.message).toString().trim()}`);
@@ -93,6 +93,30 @@ function releaseLocally() {
     console.warn(`  and then:                      npm run release -- --github-only`);
     return false;
   }
+}
+
+// ---- the public copy ----
+// The public repo isn't a mirror: it gets main's files minus those listed in package.json
+// "privateFiles" (notes that should stay in the private repo), as one new commit on top of the
+// public repo's own history, and the release tag on that commit.
+function publishPublic() {
+  const quiet = { stdio: ['ignore', 'pipe', 'pipe'] };
+  git('fetch -q public main', quiet);
+  const parent = git('rev-parse refs/remotes/public/main');
+  const index = path.join(root, '.git', 'public-index');
+  const env = { ...process.env, GIT_INDEX_FILE: index };
+  try {
+    git('read-tree main', { env });
+    for (const f of pkg.privateFiles || []) git(`rm -q -r --cached --ignore-unmatch -- "${f}"`, { env });
+    var tree = git('write-tree', { env });
+  } finally { fs.rmSync(index, { force: true }); }
+  let commit = parent;
+  if (tree !== git(`rev-parse ${parent}^{tree}`)) {
+    const message = git('log -1 --format=%B main');
+    commit = execSync(`git commit-tree ${tree} -p ${parent} -F -`, { cwd: root, input: message, encoding: 'utf8' }).trim();
+    git(`push -q public ${commit}:refs/heads/main`, quiet);
+  }
+  git(`push -q public ${commit}:refs/tags/${tag}`, quiet);
 }
 
 // ---- 5. GitHub Release with the installer ----

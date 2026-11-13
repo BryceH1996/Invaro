@@ -93,7 +93,12 @@ function drawBankBox(doc, { bank, bankLogo, inv, x, y, w, accent }) {
     const cx = x0 + Math.floor(i / perCol) * colW, cy = y + pad + 16 + 9 + (i % perCol) * rowH;
     doc.setFont('helvetica', 'normal'); doc.setTextColor(110); doc.text(k, cx, cy);
     doc.setFont('helvetica', 'bold'); doc.setTextColor(30);
+    // Long values (e.g. a company name) shrink a little to fit before anything is cut off.
+    let size = 9;
+    while (size > 7 && doc.setFontSize(size).getTextWidth(String(v)) > colW - 78) size -= 0.5;
+    doc.setFontSize(size);
     doc.text(doc.splitTextToSize(String(v), colW - 78)[0] || '', cx + 74, cy);
+    doc.setFontSize(9);
   });
   return h;
 }

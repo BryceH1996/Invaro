@@ -115,7 +115,7 @@ function createWindow(show) {
   });
   win.loadFile(path.join(__dirname, 'app', 'index.html'));
   win.on('closed', () => { win = null; });
-  win.on('focus', () => cloud && cloud.onFocus());
+  win.on('focus', () => { if (team && team.active()) team.sync('focus'); else if (cloud) cloud.onFocus(); });
   // The window only ever shows the app itself: no navigating away, no new windows.
   // (Reloading the app's own page is allowed: it's how the window shows freshly synced data.)
   win.webContents.on('will-navigate', (e, url) => {
@@ -143,6 +143,7 @@ ipcMain.handle('data:save', (_e, name, value) => {
   if (!FILES[name]) throw new Error('Unknown data file: ' + name);
   writeJson(name, value);
   if (name === 'clients' || name === 'invoices') remindersChanged();
+  if (team && team.markDirty(name)) return true; // in a team: shared record by record
   if (cloud) cloud.markDirty(name);
   return true;
 });
@@ -151,7 +152,7 @@ ipcMain.handle('data:save', (_e, name, value) => {
 const safe = fn => async (...args) => { try { return await fn(...args); } catch (e) { return { error: e.message || String(e) }; } };
 
 // ---------- account and cloud sync (cloud.js) ----------
-let cloud = null;
+let cloud = null, team = null;
 function startCloud() {
   const { createCloud } = require('./cloud');
   cloud = createCloud({
@@ -162,13 +163,43 @@ function startCloud() {
     onRemoteChange: () => win && win.webContents.send('data:changed'),
     onStatus: s => win && win.webContents.send('cloud:status', s),
     parentWindow: () => win,
+    paused: () => !!(team && team.active()),
+    onSignedIn: () => team.afterSignIn(),
+    onSignedOut: () => team.signedOut(),
+  });
+  // Teams (team.js): the same business shared between people, synced record by record.
+  team = require('./team').createTeam({
+    cloud,
+    dataDir: () => DATA_DIR,
+    readLocal: name => JSON.parse(fs.readFileSync(file(name), 'utf8')),
+    writeLocal: (name, value) => { writeJson(name, value); if (name !== 'settings') remindersChanged(); },
+    // The window merges the new data in place (no reload), so nobody loses what they're typing.
+    onRemoteChange: (kinds, all) => win && win.webContents.send('data:changed', {
+      kinds, all: !!all, data: { clients: readJson('clients'), settings: readJson('settings'), invoices: readJson('invoices') },
+    }),
+    onStatus: s => win && win.webContents.send('team:status', s),
+    focused: () => !!(win && win.isFocused()),
   });
 }
+const teamCall = fn => safe(async (_e, ...args) => { if (!team) throw new Error('Teams need the desktop app.'); return fn(...args); });
+ipcMain.handle('team:status', () => team ? team.status() : { configured: false });
+ipcMain.handle('team:refresh', teamCall(() => team.refresh()));
+ipcMain.handle('team:create', teamCall(name => team.create(name)));
+ipcMain.handle('team:invite', teamCall(email => team.invite(email)));
+ipcMain.handle('team:cancelInvite', teamCall(id => team.cancelInvite(id)));
+ipcMain.handle('team:removeMember', teamCall(id => team.removeMember(id)));
+ipcMain.handle('team:leave', teamCall(() => team.leave()));
+ipcMain.handle('team:delete', teamCall(() => team.deleteTeam()));
+ipcMain.handle('team:accept', teamCall(id => team.acceptInvite(id)));
+ipcMain.handle('team:decline', teamCall(id => team.declineInvite(id)));
+ipcMain.handle('team:sync', teamCall(() => team.sync('button')));
+ipcMain.handle('team:claimInvoice', teamCall(entry => team.claimInvoice(entry)));
+ipcMain.handle('team:clearNotice', teamCall(() => team.clearNotice()));
 ipcMain.handle('cloud:status', () => cloud ? cloud.status() : { configured: false });
 ipcMain.handle('cloud:signIn', safe(() => cloud.signIn()));
 ipcMain.handle('cloud:cancelSignIn', safe(() => cloud.cancelSignIn()));
 ipcMain.handle('cloud:signOut', safe(() => cloud.signOut()));
-ipcMain.handle('cloud:sync', safe(() => cloud.sync('button')));
+ipcMain.handle('cloud:sync', safe(() => team && team.active() ? team.sync('button') : cloud.sync('button')));
 ipcMain.handle('cloud:delete', safe(() => cloud.deleteCloudData()));
 // A client's company name as a Windows-safe folder name.
 const folderName = s => String(s || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '').replace(/[. ]+$/, '').trim() || 'Unnamed client';
@@ -362,6 +393,17 @@ ipcMain.handle('backup:open', safe(async (_e, sel) => {
   if (!t.dir || !isDir(t.dir)) throw new Error('The backup folder will be created when you save your first invoice.');
   return shell.openPath(t.dir);
 }));
+// Sharing the backup folder with a partner or colleague. Only possible with Google Drive connected online.
+const onlineTarget = sel => {
+  const t = backupTarget(sel);
+  if (!t.online) throw new Error('Connect Google Drive to share your invoices.');
+  return t;
+};
+ipcMain.handle('backup:shares', safe(async (_e, sel) => { const t = onlineTarget(sel); return gdrive().listShares(t.parts, t.shared); }));
+ipcMain.handle('backup:share', safe(async (_e, sel, email, role, message) => {
+  const t = onlineTarget(sel); return gdrive().share(t.parts, t.shared, String(email || ''), role, String(message || ''));
+}));
+ipcMain.handle('backup:unshare', safe(async (_e, sel, id) => { const t = onlineTarget(sel); return gdrive().unshare(t.parts, t.shared, String(id)); }));
 // For the folder picker: the folders inside <drive>/<path>, where path is an array of names.
 ipcMain.handle('backup:folders', safe(async (_e, sel, parts) => {
   const t = backupTarget(sel);
@@ -412,7 +454,8 @@ ipcMain.handle('data:chooseDir', async () => {
   DATA_DIR = target;
   syncReminderTask(); // the other folder's clients may have different reminders
   // Signed in: treat the new folder like a first sign-in (asks which copy to keep if both have data).
-  if (cloud && cloud.status().signedIn) await cloud.firstSync().catch(() => {});
+  if (team && team.active()) await team.reload().catch(() => {}); // in a team: fill the new folder with the team's data
+  else if (cloud && cloud.status().signedIn) await cloud.firstSync().catch(() => {});
   return target;
 });
 
@@ -806,7 +849,7 @@ app.whenReady().then(async () => {
   startCloud();
   createWindow(true);
   syncReminderTask(true);
-  win.webContents.once('did-finish-load', () => { setTimeout(checkReminders, 3000); setTimeout(() => cloud.sync('start'), 2000); });
+  win.webContents.once('did-finish-load', () => { setTimeout(checkReminders, 3000); setTimeout(() => team.active() ? team.sync('start') : cloud.sync('start'), 2000); });
   setInterval(checkReminders, 15 * 60 * 1000);
   powerMonitor.on('resume', checkReminders);
   powerMonitor.on('unlock-screen', checkReminders);

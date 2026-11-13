@@ -22,7 +22,9 @@ const NAMES = ['clients', 'settings', 'invoices'];
 const PORT = 47823, REDIRECT = `http://127.0.0.1:${PORT}/auth/callback`;
 const b64url = buf => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, onStatus, parentWindow }) {
+// paused(): true while you're in a team (team.js), which then syncs your data instead.
+// onSignedIn(): runs after sign-in; returning true (you're in a team) skips the personal first sync.
+function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, onStatus, parentWindow, paused = () => false, onSignedIn = async () => false, onSignedOut = () => {} }) {
   // Test overrides only work when running from source, never in an installed Invaro.
   const env = app.isPackaged ? {} : process.env;
   const url = env.INVOICER_CLOUD_URL || config.url;
@@ -139,7 +141,7 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
       if (switched) state.files = {};
       state.userId = state.session.user.id; save();
       busy = null; report();
-      await firstSync();
+      if (!(await onSignedIn())) await firstSync();
       return status();
     } catch (e) {
       if (e.cancelled) { if (busy === 'signing-in' && !abortWait) { busy = null; report(); } throw e; }
@@ -149,6 +151,7 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
   async function signOut() {
     try { if (signedIn()) await request('/auth/v1/logout', { method: 'POST' }); } catch (e) { /* signing out locally is what matters */ }
     state = { files: {} }; error = ''; save(); report();
+    onSignedOut();
   }
 
   // ---------- logos ride along inside the settings row ----------
@@ -220,7 +223,7 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
   }
   let again = false;
   async function sync(reason) {
-    if (!signedIn()) return status();
+    if (!signedIn() || paused()) return status();
     if (busy) { again = true; return status(); } // run once more when the current sync finishes
     busy = 'syncing'; report();
     try {
@@ -235,7 +238,7 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
     return status();
   }
   function markDirty(name) {
-    if (!signedIn() || !NAMES.includes(name)) return;
+    if (!signedIn() || paused() || !NAMES.includes(name)) return;
     fileState(name).dirty = true; save(); report();
     clearTimeout(pushTimer);
     pushTimer = setTimeout(() => sync('save'), 3000);
@@ -288,8 +291,14 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
   // Background syncing: every 5 minutes, and soon after the window gets focus.
   let lastFocusSync = 0;
   setInterval(() => sync('timer'), 5 * 60 * 1000);
+  // After leaving a team: this computer's copy becomes your personal data again.
+  function resumePersonal() {
+    for (const n of NAMES) fileState(n).dirty = true;
+    save(); sync('resume');
+  }
   return {
-    status, signIn, cancelSignIn, signOut, sync, markDirty, firstSync, deleteCloudData,
+    status, signIn, cancelSignIn, signOut, sync, markDirty, firstSync, deleteCloudData, resumePersonal,
+    request, signedIn, userId: () => state.session?.user?.id || null, withLogos, takeLogos,
     onFocus() { if (Date.now() - lastFocusSync > 60 * 1000) { lastFocusSync = Date.now(); sync('focus'); } },
   };
 }

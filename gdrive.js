@@ -179,6 +179,39 @@ function createGDrive({ config = {} }) {
     } while (page);
     return [...new Set(out)].sort((a, b) => a.localeCompare(b));
   }
+  // ---------- sharing the backup folder ----------
+  // People who can open the folder: added by Invaro or in Drive, plus anyone inherited from a parent
+  // (e.g. shared drive members), which can only be changed in Drive itself.
+  async function listShares(folders, shared) {
+    const f = await folderPath(folders, shared, false);
+    if (!f) return [];
+    const r = await api(`/drive/v3/files/${encodeURIComponent(f.id)}/permissions?supportsAllDrives=true&fields=permissions(id,type,role,emailAddress,domain,displayName,permissionDetails(inherited))`);
+    const me = (state.email || '').toLowerCase();
+    return (r.permissions || []).filter(p => p.type !== 'anyone' && (p.emailAddress || '').toLowerCase() !== me).map(p => ({
+      id: p.id, email: p.emailAddress || (p.domain ? `Anyone at ${p.domain}` : ''), name: p.displayName || '', role: p.role,
+      inherited: !!(p.permissionDetails && p.permissionDetails.length && p.permissionDetails.every(d => d.inherited)),
+    })).filter(p => p.email);
+  }
+  // Shares the folder (creating it if needed) with one person: role is "reader" or "writer".
+  // Google emails them a link, which also lets people without a Google account accept.
+  async function share(folders, shared, email, role, message) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Enter an email address, like partner@example.com.');
+    if (!['reader', 'writer'].includes(role)) throw new Error('Choose "Can view" or "Can edit".');
+    const f = await folderPath(folders, shared, true);
+    const qs = `supportsAllDrives=true&sendNotificationEmail=true${message ? `&emailMessage=${encodeURIComponent(message.slice(0, 500))}` : ''}`;
+    await api(`/drive/v3/files/${encodeURIComponent(f.id)}/permissions?${qs}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'user', role, emailAddress: email.trim() }),
+    });
+    return listShares(folders, shared);
+  }
+  async function unshare(folders, shared, permissionId) {
+    const f = await folderPath(folders, shared, false);
+    if (!f) return [];
+    await api(`/drive/v3/files/${encodeURIComponent(f.id)}/permissions/${encodeURIComponent(permissionId)}?supportsAllDrives=true`, { method: 'DELETE', raw: true })
+      .then(async res => { if (!res.ok && res.status !== 404) { const j = await res.json().catch(() => null); throw new Error((j && j.error && j.error.message) || res.statusText); } });
+    return listShares(folders, shared);
+  }
   async function folderLink(folders, shared) {
     const f = await folderPath(folders, shared, false);
     if (!f) throw new Error('The backup folder will be created when you save your first invoice.');
@@ -254,7 +287,7 @@ function createGDrive({ config = {} }) {
     return status();
   }
 
-  return { status, connect, cancel, disconnect, listSharedDrives, listFolders, upload, folderLink };
+  return { status, connect, cancel, disconnect, listSharedDrives, listFolders, upload, folderLink, listShares, share, unshare };
 }
 
 module.exports = { createGDrive };

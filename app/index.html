@@ -42,6 +42,7 @@
       <label>Client</label>
       <select id="inv-client"></select>
       <p class="muted rates" id="inv-rates"></p>
+      <label class="check" title="Personal invoices stay on your computers only. In a team, only the number is reserved so nobody else uses it."><input type="checkbox" id="inv-private"> <span id="inv-private-label">Personal: don't share this with a team</span></label>
       <div class="row">
         <div><label id="lbl-number">Invoice no.</label><input id="inv-number"></div>
         <div><label>Billing period (used in file name)</label><input id="inv-period" type="month"></div>
@@ -73,6 +74,7 @@
         <button class="btn" id="cl-new">+ New client</button>
       </div>
       <div id="cl-form">
+        <label class="check" title="A personal client, and its invoices, stay on your computers only and are never shared with a team."><input type="checkbox" id="cl-private"> Personal client: never share it, or its invoices, with a team</label>
         <label>Company</label><input data-cl="company">
         <label>Contact people</label><input data-cl="contacts" placeholder="Jane Doe | John Doe">
         <label>Phone</label><input data-cl="phone">
@@ -115,6 +117,27 @@
         <button class="btn" id="cloud-sync" hidden>Sync now</button>
         <button class="btn" id="cloud-signout" hidden>Sign out</button>
         <button class="btn danger" id="cloud-delete" hidden>Delete my cloud data</button>
+      </div>
+      <div id="team-box" class="share-box" hidden>
+        <h4 id="team-title">Work together</h4>
+        <p class="drive-status" id="team-notice" hidden></p>
+        <div id="team-invited"></div>
+        <p class="muted" id="team-help"></p>
+        <div id="team-none" class="share-add">
+          <input id="team-name" placeholder="Team name, e.g. your company" autocomplete="off">
+          <button class="btn" id="team-create" type="button">Create a team</button>
+        </div>
+        <div id="team-in" hidden>
+          <div id="team-members" class="share-list"></div>
+          <div class="share-add" id="team-invite-row" style="margin-top:10px">
+            <input id="team-email" type="email" placeholder="partner@example.com" autocomplete="off" spellcheck="false">
+            <button class="btn" id="team-invite" type="button">Invite</button>
+          </div>
+          <div class="actions">
+            <button class="btn" id="team-leave" type="button">Leave team</button>
+            <button class="btn danger" id="team-delete" type="button" hidden>Delete team</button>
+          </div>
+        </div>
       </div>
       <div class="row">
         <div><label>Your name</label><input data-me="name"></div>
@@ -224,6 +247,18 @@
         <button class="btn" id="drive-retry" hidden>Back up missing invoices</button>
         <button class="btn" id="drive-change" hidden>Choose folder…</button>
         <button class="btn" id="gd-disconnect" hidden>Disconnect Google Drive</button>
+      </div>
+      <div id="share-box" class="share-box" hidden>
+        <h4>Share your invoices</h4>
+        <p class="muted" id="share-help"></p>
+        <div id="share-online">
+          <div class="share-add">
+            <input id="share-email" type="email" placeholder="partner@example.com" autocomplete="off" spellcheck="false">
+            <select id="share-role"><option value="reader">Can view</option><option value="writer">Can edit</option></select>
+            <button class="btn" id="share-add" type="button">Share</button>
+          </div>
+          <div id="share-list" class="share-list"></div>
+        </div>
       </div>
       <h3>Updates</h3>
       <p class="drive-status" id="upd-status">Checking…</p>

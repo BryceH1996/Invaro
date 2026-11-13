@@ -18,7 +18,7 @@
 </div></header>
 <main class="wrap">
   <h1>Privacy policy</h1>
-  <p><em>Last updated: 13 November 2026</em></p>
+  <p><em>Last updated: 13 November 2026 (sharing your invoices)</em></p>
 
   <p>Invaro is a desktop app for making invoices. This page explains what information it handles, where that information is kept, and the choices you have. In short: <strong>your data stays on your computer unless you choose to sign in</strong>, and if you do, it's kept in your own private account and used only to sync it between your computers.</p>
 
@@ -35,7 +35,7 @@
   <p>Connecting Google Drive is optional, and separate from signing in. It lets Invaro back up your invoices to Google Drive on a computer without Google Drive for desktop.</p>
   <ul>
     <li><strong>What Invaro asks for:</strong> access to your Google Drive. Google requires full Drive access for an app to save into a shared drive, so that's what the consent screen shows.</li>
-    <li><strong>What Invaro does with it:</strong> it lists your shared drives and folder names so you can choose where backups go, creates that folder ("Invaro Backups" unless you pick another) with a folder per client, and uploads or replaces the invoice PDFs you save. It doesn't read, change or delete any other files.</li>
+    <li><strong>What Invaro does with it:</strong> it lists your shared drives and folder names so you can choose where backups go, creates that folder ("Invaro Backups" unless you pick another) with a folder per client, and uploads or replaces the invoice PDFs you save. If you use <em>Share your invoices</em>, it shows who that folder is shared with and adds or removes the people you choose; Google then emails them a link. It doesn't read, change or delete any other files.</li>
     <li><strong>Where it goes:</strong> straight from your computer to your Google Drive. The PDFs and the access token are never sent to us or anyone else. The token is stored on your computer, encrypted by your operating system.</li>
     <li><strong>Stopping:</strong> <em>Disconnect Google Drive</em> in Invaro's settings deletes the token and asks Google to revoke it. You can also remove Invaro at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. Files already uploaded stay in your Drive.</li>
   </ul>
@@ -50,6 +50,15 @@
   </table>
   <p>Your PDF invoice files are <strong>not</strong> uploaded; they stay on your computer.</p>
   <p>Your account data is stored with <a href="https://supabase.com">Supabase</a>, which provides Invaro's database and sign-in. It's sent over encrypted connections, and the database only lets each signed-in person read and change their own data. We don't sell, share or analyse your data, and we don't use it for anything other than syncing it back to you.</p>
+
+  <h2>If you work in a team</h2>
+  <p>Teams are optional. If you create or join a team, your business's clients, invoice history and business details (including your logos and banking details) are kept in the team's shared space with Supabase instead of only your own account.</p>
+  <ul>
+    <li><strong>Who can see it:</strong> everyone in the team can see and change all of the team's data. Nobody outside the team can.</li>
+    <li><strong>Who's in it:</strong> team members can see each other's email addresses. When the owner invites someone, their email address is stored until they join or the invitation is cancelled.</li>
+    <li><strong>What stays on your computer:</strong> your PDF files, your backup settings, the invoice you're in the middle of typing, and any client or invoice you mark <em>Personal</em>. For a personal invoice, only its number is stored in the team (so nobody else uses the same number), never its details.</li>
+    <li><strong>Leaving:</strong> leaving the team, or being removed, stops syncing; the copy already on your computer stays there. The owner can delete the team, which removes the shared data from the cloud for everyone.</li>
+  </ul>
 
   <h2>Your clients' information</h2>
   <p>The client details you enter (names, contact people, addresses, phone and VAT numbers) are information about other people and businesses. You decide what to enter; Invaro only uses it to make your invoices and, if you sign in, to sync it between your computers.</p>

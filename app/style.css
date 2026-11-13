@@ -114,7 +114,19 @@ td .btn { padding:4px 10px; }
 .drive-status { margin:0 0 6px; padding:8px 10px; border-radius:6px; background:var(--mist); font-size:13px; }
 .drive-status.on { background:var(--ok-bg); color:var(--ok-fg); }
 .drive-status.err { background:var(--err-bg); color:var(--err-fg); }
+[hidden] { display:none !important; } /* hidden always wins over display:flex/grid rules */
 #drive-folder-row { grid-column:1 / -1; }
+.share-box { margin-top:16px; padding-top:12px; border-top:1px solid var(--border); }
+.share-box h4 { margin:0 0 4px; font-size:13px; }
+.share-box .muted { margin:0 0 8px; }
+.share-add { display:flex; gap:8px; }
+.share-add input { flex:1; min-width:0; }
+.share-add select { width:auto; }
+.share-add .btn { padding:6px 14px; }
+.share-list { margin-top:8px; }
+.share-list .person { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border); font-size:13px; }
+.share-list .person span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.share-list .person small { color:var(--slate); white-space:nowrap; }
 .folder-field { display:flex; gap:8px; }
 .folder-field .btn { white-space:nowrap; padding:6px 12px; }
 .folder-dlg { width:min(440px, calc(100vw - 32px)); border:1px solid var(--border); border-radius:10px; padding:18px; background:var(--surface); color:var(--ink); }

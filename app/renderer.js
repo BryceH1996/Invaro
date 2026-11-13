@@ -25,10 +25,15 @@ let clients = [], settings = {}, invoices = [], draft = null, dataDir = '';
 
 // ---------- persistence (debounced per file) ----------
 const timers = {};
+// base[name]: the data as this window last saved or received it. Changes from your team are merged
+// against it, so whatever you've changed since (even if not saved yet) is kept.
+const base = {};
 function persist(name) {
   clearTimeout(timers[name]);
   timers[name] = setTimeout(() => {
+    timers[name] = null;
     const value = { clients, settings, invoices }[name];
+    base[name] = clone(value);
     store.save(name, value).catch(e => toast('Could not save ' + name + ': ' + e.message));
   }, 300);
 }
@@ -36,6 +41,7 @@ function persist(name) {
 async function flushSaves() {
   const pending = Object.keys(timers).filter(k => timers[k]);
   pending.forEach(k => { clearTimeout(timers[k]); timers[k] = null; });
+  pending.forEach(k => { base[k] = clone({ clients, settings, invoices }[k]); });
   await Promise.all(pending.map(k => store.save(k, { clients, settings, invoices }[k])));
 }
 
@@ -265,7 +271,7 @@ function newDraft(clientId, type = 'invoice') {
   const c = client(clientId) || clients[0];
   const today = iso(new Date());
   return {
-    type, clientId: c ? c.id : null, number: nextInvoiceNumber(type),
+    type, clientId: c ? c.id : null, number: nextInvoiceNumber(type), private: !!(c && c.private),
     date: today, due: type === 'quote' ? addDays(today, 30) : c ? addDays(today, c.dueDays) : today, period: today.slice(0, 7),
     items: c && c.items && c.items.length ? clone(c.items).map(normItem) : [normItem({ kind: 'fixed' })],
   };
@@ -322,7 +328,7 @@ function refreshPreview(delay = 250) {
 
 // ---------- invoice tab ----------
 function renderClientOptions() {
-  const opts = clients.map(c => `<option value="${c.id}">${esc(c.company || '(unnamed)')}</option>`).join('');
+  const opts = clients.map(c => `<option value="${c.id}">${c.private ? '🔒 ' : ''}${esc(c.company || '(unnamed)')}</option>`).join('');
   $('#inv-client').innerHTML = opts; $('#cl-select').innerHTML = opts;
   $('#inv-client').value = draft.clientId || '';
 }
@@ -345,6 +351,8 @@ function renderInvoice() {
   $('#lbl-date').textContent = quote ? 'Quote date' : 'Invoice date';
   $('#lbl-due').textContent = quote ? 'Valid until' : 'Due date';
   $('#download').textContent = quote ? 'Save quote' : 'Save invoice';
+  $('#inv-private').checked = !!draft.private;
+  $('#inv-private-label').textContent = teamState.team ? `Personal: don't share this with ${teamState.team.name}` : "Personal: don't share this with a team";
   $('#inv-number').value = draft.number; $('#inv-period').value = draft.period;
   $('#inv-date').value = draft.date; $('#inv-due').value = draft.due;
   renderItems();
@@ -354,7 +362,8 @@ $('#doc-type').onclick = e => {
   const type = e.target.dataset.type;
   if (!type || type === (draft.type || 'invoice')) return;
   const items = draft.items, period = draft.period;
-  draft = newDraft(draft.clientId, type); draft.items = items; draft.period = period;
+  const priv = draft.private;
+  draft = newDraft(draft.clientId, type); draft.items = items; draft.period = period; draft.private = priv;
   renderInvoice(); changed();
 };
 function renderItems() {
@@ -407,6 +416,7 @@ $('#inv-client').onchange = e => {
   renderInvoice(); changed();
 };
 $('#inv-number').oninput = e => { draft.number = e.target.value; changed(); };
+$('#inv-private').onchange = e => { draft.private = e.target.checked; changed(); };
 $('#inv-period').oninput = e => { draft.period = e.target.value; changed(); };
 $('#inv-date').oninput = e => {
   draft.date = e.target.value;
@@ -506,10 +516,12 @@ $('#download').onclick = async () => {
   const t = invoiceTotals(entry.lines, entry.c);
   entry.total = t.total; entry.subtotal = t.subtotal; entry.tax = t.tax;
   if (docType(entry) === 'invoice') entry.tracked = true; // paid / overdue tracking (from 1.12.0)
+  entry.private = !!draft.private; delete entry.inv.private; // personal: never shared with a team
   // Re-saving an invoice number that's already in History overwrites that same file.
   const previous = invoices.find(h => h.inv.number === entry.inv.number);
   entry.file = previous ? previous.file : '';
   if (previous) { entry.paidAt = previous.paidAt; entry.tracked = previous.tracked; }
+  if (teamState.team && !previous && !(await claimNumber(entry))) return;
   const path = await savePdf(entry);
   if (!path) return; // save failed (already reported)
   const idx = invoices.findIndex(h => h.inv.number === entry.inv.number);
@@ -522,6 +534,23 @@ $('#download').onclick = async () => {
   renderInvoice(); changed(); renderHistory(); renderMe(); renderOverdue();
 };
 
+// In a team, a new invoice number is claimed before saving, so two people can't both use it.
+// If someone just took it, the invoice gets the next free number. Returns false to stop saving.
+async function claimNumber(entry) {
+  for (let tries = 0; tries < 5; tries++) {
+    const r = await store.teamClaimInvoice(entry);
+    if (!r || r.ok) return true;
+    if (r.error) { toast(`Couldn't check ${entry.inv.number} with your team (${r.error}). Saving it anyway.`); return true; }
+    const type = docType(entry), old = entry.inv.number;
+    const n = Math.max(nextNumberValue(type), (numberOf(old) || 0) + 1);
+    entry.inv.number = (type === 'quote' ? (settings.quotePrefix ?? 'QUO-') : (settings.prefix || '')) + n;
+    draft.number = entry.inv.number; renderInvoice(); refreshPreview();
+    toast(`${old} was just used by ${r.by || 'someone in your team'}, so this one is ${entry.inv.number}.`);
+  }
+  toast("Couldn't find a free invoice number. Try again in a moment.");
+  return false;
+}
+
 // ---------- clients tab ----------
 let editingClient = null;
 function renderClients() {
@@ -530,13 +559,32 @@ function renderClients() {
   $('#cl-form').style.display = c ? '' : 'none';
   if (!c) return;
   editingClient = c.id; $('#cl-select').value = c.id;
-  $$('[data-cl]').forEach(el => el.value = c[el.dataset.cl] ?? '');
+  $('#cl-private').checked = !!c.private;
+  $$('[data-cl]').forEach(el => setVal(el, c[el.dataset.cl] ?? ''));
   $('#cl-items').textContent = (c.items || []).length
     ? c.items.map(normItem).map(i => i.kind === 'fixed' ? `${i.desc} ${money(i.amount, c.currency)}` : `${i.desc} (${KINDS[i.kind].toLowerCase()})`).join(' · ')
     : 'None yet. Fill in lines on an invoice and click "Save lines as client default".';
   $('#cl-reminder').textContent = reminderLabel(c.reminderDay) + '.';
 }
 $('#cl-reminder-edit').onclick = () => go('notifications');
+// Personal client: it and all its invoices stay off the team. Making a shared client personal removes
+// it (and its invoices) from everyone else's Invaro; sharing it again leaves its invoices personal.
+$('#cl-private').onchange = e => {
+  const c = client(editingClient); if (!c) return;
+  const on = e.target.checked, team = teamState.team && teamState.team.name;
+  const its = invoices.filter(h => h.c && h.c.id === c.id);
+  const n = its.length ? ` and its ${its.length} invoice${its.length === 1 ? '' : 's'}` : '';
+  if (team && !confirm(on
+    ? `Make ${c.company} personal?\n\n${team} stops seeing this client${n}: they're removed from everyone else's Invaro. You keep everything on this computer.`
+    : `Share ${c.company} with ${team}?\n\nEveryone in the team will see and can edit this client. Its invoices stay personal; share them one at a time in History if you want to.`)) {
+    e.target.checked = !on; return;
+  }
+  c.private = on;
+  if (on) { its.forEach(h => { h.private = true; }); if (draft.clientId === c.id) draft.private = true; }
+  persist('clients'); if (on && its.length) persist('invoices');
+  renderClientOptions(); $('#cl-select').value = c.id; renderInvoice(); renderHistory();
+  toast(on ? `${c.company} is personal${team ? `, and no longer shared with ${team}` : ''}.` : `${c.company} is ${team ? `shared with ${team}` : 'no longer personal'}.`);
+};
 $('#cl-select').onchange = e => { editingClient = e.target.value; renderClients(); };
 $$('[data-cl]').forEach(el => el.oninput = () => {
   const c = client(editingClient); if (!c) return;
@@ -648,8 +696,8 @@ $('#remind-bars').onclick = async e => {
 // ---------- me tab ----------
 function renderMe() {
   const me = settings.me || {};
-  $$('[data-me]').forEach(el => el.value = me[el.dataset.me] ?? '');
-  $$('[data-set]').forEach(el => el.value = settings[el.dataset.set] ?? '');
+  $$('[data-me]').forEach(el => setVal(el, me[el.dataset.me] ?? ''));
+  $$('[data-set]').forEach(el => setVal(el, settings[el.dataset.set] ?? ''));
   $('#data-dir').textContent = dataDir;
 }
 $$('[data-me]').forEach(el => el.oninput = () => { (settings.me ||= {})[el.dataset.me] = el.value; persist('settings'); refreshPreview(); });
@@ -724,6 +772,7 @@ async function refreshBackupStatus() {
   connect.classList.toggle('primary', !backupState.myDrive);
   connect.textContent = gd.connecting ? 'Waiting for Google… (click to cancel)' : (backupState.myDrive ? 'Connect Google Drive online instead' : 'Connect Google Drive');
   $('#gd-disconnect').hidden = !online;
+  refreshShares(provider, online, gd);
   $('#drive-open').hidden = !backupState.ready;
   $('#drive-change').hidden = provider !== 'other';
   $('#drive-change').textContent = settings.backupDir ? 'Choose a different folder…' : 'Choose folder…';
@@ -755,6 +804,51 @@ $('#drive-location').onchange = async e => {
   settings.backupSharedDrive = e.target.value; persist('settings');
   await refreshBackupStatus(); retryPendingBackups();
 };
+// ---------- sharing the backup folder (Google Drive online only) ----------
+const ROLES = { reader: 'Can view', commenter: 'Can comment', writer: 'Can edit', fileOrganizer: 'Content manager', organizer: 'Manager', owner: 'Owner' };
+async function refreshShares(provider, online, gd) {
+  const box = $('#share-box');
+  box.hidden = provider !== 'google' || !store.backupShares || !(online || gd.configured);
+  if (box.hidden) return;
+  $('#share-online').hidden = !online;
+  const where = `${backupShared() ? `Shared drives/${esc(backupShared())}` : 'My Drive'}/${esc((backupState.parts || ['Invaro Backups']).join('/'))}`;
+  if (!online) {
+    $('#share-help').innerHTML = 'Connect Google Drive to share your invoices with your partner or company from here. You can also open the backup folder in Google Drive and use its Share button.';
+    return;
+  }
+  $('#share-help').innerHTML = `People you add can open <b>${where}</b> in Google Drive and see every invoice as soon as it's saved. Google emails them a link.`
+    + (backupShared() ? ' Members of the shared drive can already see it.' : '');
+  renderShares(await store.backupShares(backupSel()));
+}
+function renderShares(list) {
+  const el = $('#share-list');
+  if (list && list.error) { el.innerHTML = `<p class="muted">${esc(list.error)}</p>`; return; }
+  if (!list.length) { el.innerHTML = '<p class="muted">Not shared with anyone yet.</p>'; return; }
+  el.innerHTML = list.map(p => `<div class="person"><span title="${esc(p.email)}">${esc(p.name && p.name !== p.email ? `${p.name} (${p.email})` : p.email)}</span>`
+    + `<small>${esc(ROLES[p.role] || p.role)}${p.inherited ? ' · from the shared drive' : ''}</small>`
+    + (p.inherited || p.role === 'owner' ? '' : `<button class="link warn" type="button" data-unshare="${esc(p.id)}" data-email="${esc(p.email)}">Remove</button>`) + '</div>').join('');
+  el.querySelectorAll('[data-unshare]').forEach(b => {
+    b.onclick = async () => {
+      if (!confirm(`Stop sharing your invoices with ${b.dataset.email}? They won't be able to open the folder any more.`)) return;
+      b.disabled = true;
+      const r = await store.backupUnshare(backupSel(), b.dataset.unshare);
+      if (r && r.error) { b.disabled = false; return toast(r.error); }
+      renderShares(r); toast(`Stopped sharing with ${b.dataset.email}.`);
+    };
+  });
+}
+$('#share-add').onclick = async () => {
+  const email = $('#share-email').value.trim(), role = $('#share-role').value;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('Enter an email address, like partner@example.com.'); return $('#share-email').focus(); }
+  const btn = $('#share-add'); btn.disabled = true; btn.textContent = 'Sharing…';
+  const r = await store.backupShare(backupSel(), email, role, `${(settings.me || {}).company || (settings.me || {}).name || 'Someone'} shared their invoices with you from Invaro.`);
+  btn.disabled = false; btn.textContent = 'Share';
+  if (r && r.error) return toast(r.error);
+  $('#share-email').value = '';
+  renderShares(r);
+  toast(`Shared with ${email}. Google has emailed them a link.`);
+};
+$('#share-email').onkeydown = e => { if (e.key === 'Enter') $('#share-add').click(); };
 async function setBackupFolder(value) {
   const f = cleanFolder(value);
   $('#drive-folder').value = f;
@@ -937,13 +1031,15 @@ function renderHistory() {
     return `<span class="status ${s.key}">${esc(s.label)}</span> ${btn}`;
   };
   $('#hist').innerHTML = invoices.map(h =>
-    `<tr><td>${esc(h.inv.number)}</td><td>${esc(h.c.company)}</td><td>${esc(h.inv.date)}</td>
+    `<tr><td>${esc(h.inv.number)}${h.savedBy ? `<div class="muted" title="Saved by ${esc(h.savedBy)}">by ${esc(h.savedBy.split('@')[0])}</div>` : ''}${h.private ? '<div class="muted" title="Personal: not shared with a team">🔒 Personal</div>' : ''}</td><td>${esc(h.c.company)}</td><td>${esc(h.inv.date)}</td>
      <td class="num">${esc(money(h.total, h.c.currency))}</td>
      <td>${statusCell(h)}</td>
      <td>${driveCell(h)}</td>
      <td class="num">${h.file && window.api ? `<button class="btn" data-act="open" data-id="${h.id}">Open</button>` : ''}
-     <button class="btn" data-act="pdf" data-id="${h.id}" title="Save this again (e.g. after editing your details)">Re-save</button>
+     ${h.file || !window.api ? `<button class="btn" data-act="pdf" data-id="${h.id}" title="Save this again (e.g. after editing your details)">Re-save</button>`
+       : `<button class="btn" data-act="pdf" data-id="${h.id}" title="Saved on another computer. Make the PDF on this one too.">Save PDF here</button>`}
      <button class="btn" data-act="copy" data-id="${h.id}" title="Start a new invoice with these lines">Copy</button>
+     <button class="btn" data-act="private" data-id="${h.id}" title="${h.private ? 'Share this with your team' : 'Keep this off your team'}">${h.private ? 'Share' : 'Make personal'}</button>
      <button class="x" data-act="del" data-id="${h.id}" title="Remove from history">×</button></td></tr>`).join('');
 }
 $('#hist').onclick = async e => {
@@ -966,16 +1062,26 @@ $('#hist').onclick = async e => {
     h.convertedTo = draft.number; persist('invoices'); renderHistory();
     renderInvoice(); changed(); go('invoice');
     toast(`Started ${draft.number} from quote ${h.inv.number}. Check it and click Save invoice.`);
+  } else if (act === 'private') {
+    const on = !h.private, team = teamState.team && teamState.team.name;
+    const c = client(h.c && h.c.id);
+    if (team && !confirm(on
+      ? `Make ${h.inv.number} personal?\n\nIt's removed from everyone else's Invaro in ${team}. Its number stays reserved, so nobody reuses it.`
+      : `Share ${h.inv.number} with ${team}?\n\nEveryone in the team will see it${c && c.private ? `, including ${c.company}'s details on it (that client stays personal)` : ''}.`)) return;
+    h.private = on; persist('invoices'); renderHistory();
+    toast(on ? `${h.inv.number} is personal.` : `${h.inv.number} is ${team ? `shared with ${team}` : 'no longer personal'}.`);
   } else if (act === 'copy') {
     draft = newDraft(client(h.c.id) ? h.c.id : undefined);
     draft.items = clone(h.inv.items).map(normItem);
     renderInvoice(); changed(); go('invoice');
-  } else if (act === 'del' && confirm(`Remove ${h.inv.number} from history? (The PDF file itself is not deleted.)`)) {
+  } else if (act === 'del' && confirm(`Remove ${h.inv.number} from history${teamState.team && !h.private ? ` for everyone in ${teamState.team.name}` : ''}? (PDF files are not deleted.)`)) {
     invoices = invoices.filter(x => x.id !== id); persist('invoices'); renderHistory();
   }
 };
 
 // ---------- misc ----------
+// Sets a field's value, unless it's the one being typed in (a team change mustn't move the cursor).
+function setVal(el, v) { if (el !== document.activeElement || el.value === '') el.value = v; }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])); }
 function toast(msg, actLabel, act) {
   const t = $('#toast'); $('#toast-msg').textContent = msg;
@@ -989,6 +1095,7 @@ function go(tab) {
   if (tab === 'notifications') renderNotifications();
   if (tab === 'reports') renderReports();
   if (tab === 'history') renderHistory();
+  if (tab === 'me' && store.teamRefresh && teamState.signedIn) store.teamRefresh().then(r => r && !r.error && renderTeam(r)); // new invitations
 }
 const tabShown = tab => $(`section[data-tab="${tab}"]`).classList.contains('show');
 $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
@@ -996,6 +1103,7 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
 (async function init() {
   const d = await store.load();
   clients = d.clients; settings = d.settings; invoices = d.invoices; dataDir = d.dataDir;
+  Object.assign(base, clone({ clients, settings, invoices }));
   $('#cl-currency').innerHTML = Object.entries(CURRENCIES)
     .map(([code, { symbol, name }]) => `<option value="${code}">${code} (${symbol}) – ${name}</option>`).join('');
   let migrated = false;
@@ -1023,7 +1131,12 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
     store.onCloudStatus(renderCloud);
     // Newer data arrived from another computer: reload to show it (pending local edits are dropped,
     // since the synced copy already includes everything that was saved).
-    store.onDataChanged(() => { Object.keys(timers).forEach(k => { clearTimeout(timers[k]); timers[k] = null; }); location.reload(); });
+    store.onDataChanged(change => {
+      if (change && change.data && !change.all) return mergeRemote(change); // a team change: merge it in place
+      Object.keys(timers).forEach(k => { clearTimeout(timers[k]); timers[k] = null; });
+      location.reload();
+    });
+    if (store.teamStatus) { store.onTeamStatus(renderTeam); renderTeam(await store.teamStatus()); }
     renderCloud(await store.cloudStatus());
   } else renderCloud({ configured: false });
   checkForUpdate();
@@ -1079,12 +1192,14 @@ function renderCloud(s) {
     pill.hidden = true;
     return;
   }
-  const when = c.busy ? 'syncing now…' : `last synced ${ago(c.lastSync)}`;
-  el.className = 'drive-status ' + (c.error ? 'err' : 'on');
-  el.textContent = `Signed in as ${c.email}, ${when}.` + (c.pending && !c.busy ? ` ${c.pending} change${c.pending === 1 ? '' : 's'} waiting to upload.` : '') + (c.error ? ` Problem: ${c.error}` : '');
+  const t = teamState && teamState.team ? teamState : null; // in a team, the team sync is what counts
+  const busy = t ? t.busy : c.busy, err = t ? t.error : c.error;
+  const when = busy ? 'syncing now…' : `last synced ${ago(t ? t.lastSync : c.lastSync)}`;
+  el.className = 'drive-status ' + (err ? 'err' : 'on');
+  el.textContent = `Signed in as ${c.email}${t ? `, working in ${t.team.name}` : ''}, ${when}.` + (!t && c.pending && !busy ? ` ${c.pending} change${c.pending === 1 ? '' : 's'} waiting to upload.` : '') + (err ? ` Problem: ${err}` : '');
   pill.hidden = false;
-  pill.className = 'cloud-pill' + (c.error ? ' err' : '');
-  pill.textContent = c.error ? '⚠ Sync problem' : c.busy ? '↻ Syncing…' : '☁ Synced';
+  pill.className = 'cloud-pill' + (err ? ' err' : '');
+  pill.textContent = err ? '⚠ Sync problem' : busy ? '↻ Syncing…' : t ? `☁ ${t.team.name}` : '☁ Synced';
   pill.title = el.textContent;
 }
 $('#cloud-pill').onclick = () => { go('me'); $('#account').scrollIntoView({ behavior: 'smooth' }); };
@@ -1109,6 +1224,164 @@ $('#cloud-delete').onclick = async () => {
   renderCloud(await store.cloudStatus());
 };
 setInterval(() => renderCloud(), 30 * 1000); // keeps "last synced … ago" current
+
+// ---------- teams (team.js) ----------
+// Merging a change from your team into what's on screen. For each client / invoice / setting:
+// if you haven't touched it since the last save, take theirs; if you have, keep yours (it's uploaded
+// next, and the later change wins). Then only the affected views are redrawn.
+const canonJ = v => Array.isArray(v) ? `[${v.map(canonJ).join(',')}]`
+  : v && typeof v === 'object' ? `{${Object.keys(v).sort().filter(k => v[k] !== undefined).map(k => JSON.stringify(k) + ':' + canonJ(v[k])).join(',')}}` : JSON.stringify(v ?? null);
+const same = (a, b) => canonJ(a) === canonJ(b);
+function mergeList(local, before, theirs, key) {
+  const was = new Map((before || []).map(x => [key(x), x])), mine = new Map(local.map(x => [key(x), x]));
+  const out = [], seen = new Set();
+  for (const t of theirs) {
+    const k = key(t); seen.add(k);
+    const l = mine.get(k);
+    if (!l) { if (!was.has(k)) out.push(t); continue; } // gone here since the last save: stays gone
+    out.push(same(l, was.get(k)) ? t : l);
+  }
+  for (const l of local) { // added here (keep), or deleted by them (drop, unless changed here)
+    const k = key(l);
+    if (seen.has(k)) continue;
+    if (!was.has(k) || !same(l, was.get(k))) out.push(l);
+  }
+  return out;
+}
+function mergeRemote({ kinds, data }) {
+  let mineToSave = [];
+  if (kinds.includes('clients')) {
+    const merged = mergeList(clients, base.clients, data.clients, c => c.id);
+    merged.forEach(c => { c.items = (c.items || []).map(normItem); });
+    clients = merged; base.clients = clone(data.clients);
+    if (!same(clients, data.clients)) mineToSave.push('clients');
+  }
+  if (kinds.includes('invoices')) {
+    const merged = mergeList(invoices, base.invoices, data.invoices, h => h.inv.number);
+    merged.sort((a, b) => String(b.savedAt || '').localeCompare(String(a.savedAt || '')));
+    invoices = merged; base.invoices = clone(data.invoices);
+    if (!same(invoices, data.invoices)) mineToSave.push('invoices');
+  }
+  if (kinds.includes('settings')) {
+    const before = base.settings || {}, next = { ...data.settings };
+    for (const k of new Set([...Object.keys(settings), ...Object.keys(data.settings)])) {
+      if (k === 'draft') continue;
+      if (!same(settings[k], before[k])) { if (settings[k] === undefined) delete next[k]; else next[k] = settings[k]; } // changed here
+    }
+    const logoChanged = next.logo !== settings.logo || !same(next.bank && next.bank.logo, settings.bank && settings.bank.logo);
+    next.draft = settings.draft;
+    settings = next; base.settings = clone(data.settings);
+    if (!same(settings, data.settings)) mineToSave.push('settings');
+    if (logoChanged && store.loadLogo) (async () => {
+      logo = settings.logo ? await loadLogoImage(await store.loadLogo(settings.logo)) : null;
+      bankLogo = settings.bank && settings.bank.logo ? await loadLogoImage(await store.loadLogo(settings.bank.logo)) : null;
+      refreshPreview();
+    })();
+  }
+  mineToSave.forEach(persist);
+  // Redraw what changed, keeping the draft (and its number, unless someone just used it).
+  if (draft && !client(draft.clientId) && clients.length) draft = newDraft();
+  else if (draft && numberUsed(draft.number) && !invoices.some(h => h.inv.number === draft.number && !h.savedBy)) draft.number = nextInvoiceNumber(draft.type || 'invoice');
+  settings.nextNumber = nextNumberValue('invoice'); settings.nextQuoteNumber = Math.max(num(settings.nextQuoteNumber), nextNumberValue('quote'));
+  if (kinds.includes('clients')) { renderClients(); renderInvoice(); }
+  if (kinds.includes('settings')) { renderMe(); renderDesign(); renderBank(); renderInvoice(); }
+  if (kinds.includes('invoices')) { renderHistory(); renderOverdue(); if (tabShown('reports')) renderReports(); }
+  if (tabShown('notifications')) renderNotifications();
+  refreshPreview();
+}
+
+let teamState = { configured: false }, seenInvites = '';
+const ROLE_NAMES = { owner: 'Owner', member: 'Member' };
+const inviteMessage = (team, email) => `Hi! I've invited you to "${team}" in Invaro, so we can work on the same clients and invoices.
+
+1. Install Invaro: https://github.com/BryceH1996/invoicer/releases/latest
+2. Open My details → Account & sync, and sign in with Google as ${email}
+3. Click Join next to the invitation.`;
+function renderTeam(s) {
+  teamState = s || teamState;
+  const t = teamState, box = $('#team-box');
+  box.hidden = !t.configured || !t.signedIn;
+  renderCloud();
+  if (box.hidden) return;
+  const n = $('#team-notice');
+  n.hidden = !t.notice && !t.error;
+  n.className = 'drive-status' + (t.error ? ' err' : '');
+  n.textContent = t.error ? `Team sync problem: ${t.error}` : t.notice || '';
+  n.title = t.notice ? 'Click to dismiss' : '';
+  // Invitations for you
+  $('#team-invited').innerHTML = (t.myInvites || []).map(i => `<div class="update-bar remind"><span><b>${esc(i.from)}</b> invited you to <b>${esc(i.team)}</b>.</span>
+    <button class="btn primary" data-team-join="${esc(i.id)}" data-team-name="${esc(i.team)}">Join</button>
+    <button class="btn" data-team-decline="${esc(i.id)}">Not now</button></div>`).join('');
+  const key = (t.myInvites || []).map(i => i.id).join();
+  if (key && key !== seenInvites) toast(`You've been invited to ${t.myInvites[0].team}.`, 'Show', () => { go('me'); $('#account').scrollIntoView({ behavior: 'smooth' }); });
+  seenInvites = key;
+  const inTeam = !!t.team, owner = inTeam && t.team.role === 'owner';
+  $('#team-title').textContent = inTeam ? `Team: ${t.team.name}` : 'Work together';
+  $('#inv-private-label').textContent = inTeam ? `Personal: don't share this with ${t.team.name}` : "Personal: don't share this with a team";
+  $('#team-help').textContent = inTeam
+    ? `Everyone in ${t.team.name} sees and edits the same clients, invoices, history and business details. Changes show up on each other's screens within seconds. Backups and the PDF folder stay your own.`
+    : 'Share one business with your partner or colleagues: you all see and edit the same clients, invoices and details, kept in sync within seconds. Create a team and invite them by email.';
+  $('#team-none').hidden = inTeam;
+  $('#team-in').hidden = !inTeam;
+  if (!inTeam) return;
+  const people = (t.members || []).map(m => `<div class="person"><span>${esc(m.email)}${m.email === t.me ? ' (you)' : ''}</span><small>${esc(ROLE_NAMES[m.role] || m.role)}</small>`
+    + (owner && m.email !== t.me ? `<button class="link warn" type="button" data-team-remove="${esc(m.user_id)}" data-email="${esc(m.email)}">Remove</button>` : '') + '</div>');
+  const pending = (t.invites || []).map(i => `<div class="person"><span>${esc(i.email)}</span><small>Invited</small>
+    <button class="link" type="button" data-team-copy="${esc(i.email)}">Copy invite message</button>
+    <button class="link warn" type="button" data-team-cancel="${esc(i.id)}">Cancel</button></div>`);
+  $('#team-members').innerHTML = people.concat(pending).join('');
+  $('#team-invite-row').hidden = !owner;
+  $('#team-leave').hidden = owner;
+  $('#team-delete').hidden = !owner;
+}
+const teamDo = async (fn, ok) => { const r = await fn(); if (r && r.error) { toast(r.error); return null; } renderTeam(r); if (ok) toast(ok); return r; };
+$('#team-notice').onclick = () => store.teamClearNotice && store.teamClearNotice();
+$('#team-create').onclick = async () => {
+  const name = $('#team-name').value.trim() || (settings.me || {}).company || '';
+  if (!name) { toast('Give your team a name, like your company name.'); return $('#team-name').focus(); }
+  const pc = clients.filter(c => c.private).length, pi = invoices.filter(h => h.private).length;
+  const kept = pc || pi ? `\n\nKept personal (not shared): ${[pc && `${pc} client${pc === 1 ? '' : 's'}`, pi && `${pi} invoice${pi === 1 ? '' : 's'}`].filter(Boolean).join(' and ')}.` : '\n\nTo keep a client or invoice to yourself, tick Personal on it first.';
+  if (!confirm(`Create the team "${name}"?\n\nYour clients, invoices and business details on this computer become the team's, and everyone you invite will see and edit them.${kept}`)) return;
+  await flushSaves();
+  $('#team-create').disabled = true;
+  await teamDo(() => store.teamCreate(name), `Team "${name}" created. Now invite your partner by email.`);
+  $('#team-create').disabled = false;
+};
+$('#team-invite').onclick = async () => {
+  const email = $('#team-email').value.trim();
+  const r = await teamDo(() => store.teamInvite(email));
+  if (!r) return;
+  $('#team-email').value = '';
+  const msg = inviteMessage(teamState.team.name, email.toLowerCase());
+  toast(`Invited ${email}. Let them know: they sign in to Invaro with that address and click Join.`, 'Copy message', () => navigator.clipboard.writeText(msg).then(() => toast('Invite message copied. Paste it into an email or chat.')));
+};
+$('#team-email').onkeydown = e => { if (e.key === 'Enter') $('#team-invite').click(); };
+$('#team-in').onclick = async e => {
+  const d = e.target.dataset;
+  if (d.teamCopy) { await navigator.clipboard.writeText(inviteMessage(teamState.team.name, d.teamCopy)); toast('Invite message copied. Paste it into an email or chat.'); }
+  else if (d.teamCancel) teamDo(() => store.teamCancelInvite(d.teamCancel), 'Invitation cancelled.');
+  else if (d.teamRemove && confirm(`Remove ${d.email} from ${teamState.team.name}?\n\nThey can't see or change the team's data any more. The copy already on their computer stays there.`))
+    teamDo(() => store.teamRemoveMember(d.teamRemove), `${d.email} was removed.`);
+};
+$('#team-invited').onclick = async e => {
+  const d = e.target.dataset;
+  if (d.teamDecline) teamDo(() => store.teamDecline(d.teamDecline), 'Invitation declined.');
+  if (!d.teamJoin) return;
+  if (!confirm(`Join "${d.teamName}"?\n\nThis computer switches to the team's clients, invoices and business details. Your personal clients and invoices (ticked Personal) come along and stay yours. Your current files are copied to the backups folder in your data folder first.`)) return;
+  await flushSaves();
+  e.target.disabled = true;
+  await teamDo(() => store.teamAccept(d.teamJoin)); // the window reloads with the team's data
+};
+$('#team-leave').onclick = async () => {
+  if (!confirm(`Leave ${teamState.team.name}?\n\nYou keep a copy of everything on this computer, and it goes back to syncing with just your own account.`)) return;
+  await flushSaves();
+  teamDo(() => store.teamLeave(), 'You left the team. Your copy stays on this computer.');
+};
+$('#team-delete').onclick = async () => {
+  if (!confirm(`Delete the team "${teamState.team.name}" for everyone?\n\nThe shared data is removed from the cloud and nobody can sync it any more. Everyone keeps the copy on their own computer. This can't be undone.`)) return;
+  await flushSaves();
+  teamDo(() => store.teamDelete(), 'Team deleted. Your copy stays on this computer.');
+};
 
 // ---------- updates settings ----------
 async function renderUpdates() {

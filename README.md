@@ -40,7 +40,9 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 - **Quotes:** switch **New invoice** to **Quote** for a quote with its own numbering and a "valid until" date, then turn it into an invoice with one click.
 - **Reports:** see what you've invoiced, been paid, are owed and charged in VAT for a tax year (March to February) or calendar year, by client and by month, and export it to a spreadsheet.
 - **Sign in with Google (optional):** back up your clients, settings, logos and invoice history to your own private account, and use them on your other computers.
+- **Teams (optional):** create a team and invite your partner or colleagues by email. You all see and edit the same clients, invoices, history and business details, kept in sync within seconds. Invoice numbers never clash, and if two people change the same thing, the later change wins and the other is kept in a `conflicts` folder. Tick **Personal** on a client or an invoice, before or after you share, to keep it out of the team.
 - **Backups:** every saved invoice is also copied to Google Drive (My Drive or a shared drive), OneDrive, or any other folder you choose, into a folder of your choice with a folder per client (My details → Invoice backup).
+- **Share your invoices:** with Google Drive connected, type your partner's or company's email to give them view or edit access to your backup folder. They see each invoice as soon as it's saved.
 
 ![The Notifications tab, with a reminder day for each client](docs/screenshot-notifications.png)
 
@@ -107,6 +109,7 @@ It refuses to reuse a version number. Use `--no-build` to reuse the installer in
 | `preload.js` | Bridge between the UI and the main process |
 | `app/` | UI (`index.html`, `renderer.js`, `style.css`) and the PDF layout (`pdf.js`) |
 | `cloud.js` | Sign-in with Google (via Supabase) and cloud sync |
+| `team.js`, `supabase/teams.sql` | Teams: shared data synced record by record, and its database |
 | `docs/` | The website (GitHub Pages): homepage and privacy policy, plus README screenshots |
 | `scripts/release.js` | The release script |
 | `.github/workflows/mac.yml`, `scripts/mac-smoke-test.js` | The Mac build and its smoke test |
@@ -138,5 +141,7 @@ grant execute on function public.delete_own_account() to authenticated;
 ```
 
 Google is the sign-in provider, and `http://127.0.0.1:47823/auth/callback` must be in **Authentication → URL Configuration → Redirect URLs**.
+
+Teams also need the tables, row level security and functions in [`supabase/teams.sql`](supabase/teams.sql). Run that file once in the SQL editor; it replaces `delete_own_account` above with a version that knows about teams.
 
 © All rights reserved. The code is public so you can see what the app does. It isn't licensed for reuse.

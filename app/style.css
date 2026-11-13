@@ -18,6 +18,8 @@ header .version { margin-left:auto; font-size:12px; opacity:.75; }
 .swatches button.on { box-shadow:0 0 0 2px #222; }
 .swatches label { display:flex; align-items:center; gap:6px; margin:0 0 0 6px; font-size:13px; cursor:pointer; }
 .swatches input[type=color] { width:34px; height:28px; padding:0; border:1px solid #ccc; border-radius:6px; background:#fff; cursor:pointer; }
+label.check { display:flex; align-items:center; gap:8px; font-size:13px; margin:10px 0 4px; cursor:pointer; text-transform:none; letter-spacing:0; color:inherit; }
+label.check input { width:auto; margin:0; }
 .logo-row { display:flex; align-items:center; gap:14px; }
 .logo-box { width:160px; height:64px; border:1px dashed #ccc; border-radius:6px; display:flex; align-items:center; justify-content:center; background:#fff; overflow:hidden; }
 .logo-box img { max-width:150px; max-height:56px; }

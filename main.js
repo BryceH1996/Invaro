@@ -162,11 +162,16 @@ const logoData = name => {
   if (!p || !fs.existsSync(p)) return null;
   return `data:${LOGO_TYPES[path.extname(p).toLowerCase()] || 'image/png'};base64,${fs.readFileSync(p).toString('base64')}`;
 };
-const removeLogos = () => fs.readdirSync(DATA_DIR).filter(f => /^logo\.[a-z]+$/i.test(f)).forEach(f => fs.rmSync(path.join(DATA_DIR, f), { force: true }));
+// kind: 'logo' (your company) or 'bank-logo' (the bank on your EFT details).
+const LOGO_KINDS = { logo: 'Choose your company logo', 'bank-logo': "Choose your bank's logo" };
+const logoKind = k => LOGO_KINDS[k] ? k : 'logo';
+const removeLogos = kind => fs.existsSync(DATA_DIR) && fs.readdirSync(DATA_DIR)
+  .filter(f => new RegExp(`^${logoKind(kind)}\\.[a-z]+$`, 'i').test(f)).forEach(f => fs.rmSync(path.join(DATA_DIR, f), { force: true }));
 ipcMain.handle('logo:load', (_e, name) => logoData(name));
-ipcMain.handle('logo:choose', safe(async () => {
+ipcMain.handle('logo:choose', safe(async (_e, kind) => {
+  kind = logoKind(kind);
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
-    title: 'Choose your company logo',
+    title: LOGO_KINDS[kind],
     filters: [{ name: 'Images', extensions: Object.keys(LOGO_TYPES).map(e => e.slice(1)) }],
     properties: ['openFile'],
   });
@@ -175,12 +180,12 @@ ipcMain.handle('logo:choose', safe(async () => {
   if (!LOGO_TYPES[ext]) throw new Error('Choose a PNG, JPG, WebP or SVG image.');
   if (fs.statSync(filePaths[0]).size > 10 * 1024 * 1024) throw new Error('That image is over 10 MB. Choose a smaller one.');
   fs.mkdirSync(DATA_DIR, { recursive: true });
-  removeLogos();
-  const name = 'logo' + ext;
+  removeLogos(kind);
+  const name = kind + ext;
   fs.copyFileSync(filePaths[0], path.join(DATA_DIR, name));
   return { name, data: logoData(name) };
 }));
-ipcMain.handle('logo:remove', () => { removeLogos(); return true; });
+ipcMain.handle('logo:remove', (_e, kind) => { removeLogos(kind); return true; });
 
 // ---------- Google Drive backups ----------
 // Google Drive for desktop shows your Drive as a "My Drive" folder (usually G:\My Drive,
@@ -264,7 +269,7 @@ ipcMain.handle('data:chooseDir', async () => {
     if (response !== 0) return null;
   } else {
     fs.mkdirSync(target, { recursive: true });
-    const logos = fs.existsSync(DATA_DIR) ? fs.readdirSync(DATA_DIR).filter(f => /^logo\.[a-z]+$/i.test(f)) : [];
+    const logos = fs.existsSync(DATA_DIR) ? fs.readdirSync(DATA_DIR).filter(f => /^(bank-)?logo\.[a-z]+$/i.test(f)) : [];
     for (const f of [...Object.values(FILES), ...logos]) {
       const src = path.join(DATA_DIR, f);
       if (fs.existsSync(src)) fs.copyFileSync(src, path.join(target, f));

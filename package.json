@@ -1,7 +1,7 @@
 {
   "name": "invoicer",
   "productName": "Invoicer",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Desktop invoicing app: saved clients, rates, and PDF invoices.",
   "author": "Invoicer",
   "main": "main.js",

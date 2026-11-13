@@ -116,6 +116,34 @@
       <label>Payment details / notes (printed under the total, optional)</label>
       <textarea data-me="notes" rows="4" placeholder="Bank: ...&#10;Account: ..."></textarea>
 
+      <h3>Banking details (EFT)</h3>
+      <label class="check"><input type="checkbox" data-bank="enabled"> Show banking details at the bottom of my invoices</label>
+      <div id="bank-form">
+        <div class="row">
+          <div><label>Bank</label><select id="bank-pick"></select></div>
+          <div><label>Bank name (as printed)</label><input data-bank="bankName"></div>
+        </div>
+        <div class="row">
+          <div><label>Account holder</label><input data-bank="accountName"></div>
+          <div><label>Account number</label><input data-bank="accountNumber"></div>
+        </div>
+        <div class="row three">
+          <div><label>Account type</label><select data-bank="accountType" id="bank-type"></select></div>
+          <div><label>Branch code</label><input data-bank="branchCode"></div>
+          <div><label>SWIFT / BIC</label><input data-bank="swift" placeholder="For payments from abroad"></div>
+        </div>
+        <label class="check"><input type="checkbox" data-bank="useReference"> Ask clients to use the invoice number as the payment reference</label>
+        <label>Bank logo</label>
+        <div class="logo-row">
+          <div class="logo-box" id="bank-logo-box"><span class="muted">No logo</span></div>
+          <div class="actions">
+            <button class="btn" id="bank-logo-choose">Choose bank logo…</button>
+            <button class="btn" id="bank-logo-remove" hidden>Remove</button>
+          </div>
+        </div>
+        <p class="muted">Choosing a South African bank fills in its universal branch code and SWIFT code from public lists. Check them against your bank statement. Your bank's logo is your own copy, saved in your data folder.</p>
+      </div>
+
       <h3>Invoice design</h3>
       <label>Template</label>
       <div class="templates" id="design-templates"></div>

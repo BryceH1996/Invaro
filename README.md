@@ -26,7 +26,8 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 
 - **Clients:** each client keeps its address, payment terms, currency (GBP, USD, EUR or ZAR), hourly rate, daily rate and day-off reduction.
 - **Pricing:** add lines as days, hours, days off or fixed amounts, and the total is worked out from the client's rates.
-- **Your look:** choose from three templates (Classic, Wave and Minimal) in any colour, and add your company logo.
+- **Your look:** choose from six templates (Classic, Wave, Minimal, Bold, Elegant and Sidebar) in any colour, and add your company logo.
+- **EFT details:** print your bank, account holder, account number, account type, branch code, SWIFT code and payment reference at the bottom of every invoice, with your bank's logo. Pick a South African bank to fill in its branch and SWIFT codes.
 - **Business details:** your company name, VAT, tax and registration numbers, plus each client's VAT number. Set a tax rate for a client to add a VAT line to their invoices.
 - **Live preview:** the PDF updates as you type. Zoom with − / +, or Ctrl (⌘ on a Mac) with + / − / 0.
 - **A folder per client:** **Save invoice** puts the PDF straight into that client's folder, e.g. `Documents/Invoicer/Northwind Design Co/Northwind Design Co. Invoice - November 2026 - Alex Morgan.pdf`.
@@ -66,6 +67,7 @@ Everything is in the `Invoicer` folder in your Documents (**My details → Data*
 | `settings.json` | Your details and invoice settings |
 | `invoices.json` | The history of saved invoices |
 | `logo.png` (or `.jpg`, …) | Your logo, if you've added one |
+| `bank-logo.png` (or `.jpg`, …) | Your bank's logo, if you've added one |
 | `<Client>/*.pdf` | Your invoices, one folder per client |
 
 Invoicer's app folder also remembers which data folder you use and when each reminder last showed. It's `%APPDATA%\Invoicer` on Windows and `~/Library/Application Support/Invoicer` on a Mac. To back everything up, or to use the same data on another computer, move the data folder into OneDrive, iCloud Drive or similar.

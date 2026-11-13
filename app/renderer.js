@@ -73,11 +73,57 @@ function priced(items, c) {
 }
 
 // ---------- invoice design (template, colour, logo) ----------
-let logo = null; // { data, w, h } with data a PNG data URL, scaled down for the PDF
+let logo = null, bankLogo = null; // { data, w, h } with data a PNG data URL, scaled down for the PDF
+// Saved invoices keep the banking details they were saved with; older ones use your current details.
 const pdfOptions = (entry) => ({
   me: entry.me, c: entry.c, inv: entry.inv, lines: entry.lines, pageSize: entry.pageSize,
   design: entry.design, logo, taxLabel: entry.taxLabel || settings.taxLabel,
+  bank: entry.bank || settings.bank, bankLogo,
 });
+
+// ---------- banking details (EFT) ----------
+function renderBank() {
+  const b = settings.bank ||= {};
+  $('#bank-pick').innerHTML = '<option value="">Choose your bank…</option>'
+    + SA_BANKS.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('') + '<option value="other">Another bank</option>';
+  $('#bank-pick').value = b.bankId || '';
+  $('#bank-type').innerHTML = '<option value=""></option>' + ACCOUNT_TYPES.map(t => `<option>${esc(t)}</option>`).join('');
+  $$('[data-bank]').forEach(el => {
+    if (el.type === 'checkbox') el.checked = !!b[el.dataset.bank];
+    else el.value = b[el.dataset.bank] ?? '';
+  });
+  $('#bank-form').hidden = !b.enabled;
+  $('#bank-logo-box').innerHTML = bankLogo ? `<img src="${bankLogo.data}" alt="Bank logo">` : '<span class="muted">No logo</span>';
+  $('#bank-logo-remove').hidden = !bankLogo;
+}
+$$('[data-bank]').forEach(el => el.addEventListener(el.type === 'checkbox' || el.tagName === 'SELECT' ? 'change' : 'input', () => {
+  const b = settings.bank ||= {};
+  b[el.dataset.bank] = el.type === 'checkbox' ? el.checked : el.value;
+  if (el.dataset.bank === 'enabled') { if (el.checked && b.useReference === undefined) b.useReference = true; renderBank(); }
+  persist('settings'); refreshPreview();
+}));
+$('#bank-pick').onchange = e => {
+  const b = settings.bank ||= {};
+  const known = SA_BANKS.find(x => x.id === e.target.value);
+  b.bankId = e.target.value;
+  if (known) Object.assign(b, { bankName: known.name, branchCode: known.branch, swift: known.swift });
+  persist('settings'); renderBank(); refreshPreview(0);
+  if (!known && e.target.value === 'other') $('[data-bank="bankName"]').focus();
+};
+$('#bank-logo-choose').onclick = async () => {
+  if (!store.chooseLogo) return toast('Logos are only available in the desktop app.');
+  const r = await store.chooseLogo('bank-logo');
+  if (!r) return;
+  if (r.error) return toast(r.error);
+  const img = await loadLogoImage(r.data);
+  if (!img) { await store.removeLogo('bank-logo'); return toast("Couldn't read that image. Try a PNG or JPG."); }
+  bankLogo = img; (settings.bank ||= {}).logo = r.name; persist('settings');
+  renderBank(); refreshPreview(0);
+};
+$('#bank-logo-remove').onclick = async () => {
+  await store.removeLogo('bank-logo'); bankLogo = null; (settings.bank ||= {}).logo = ''; persist('settings');
+  renderBank(); refreshPreview(0);
+};
 // Turns any image the browser can show into a PNG no bigger than 800px, for jsPDF.
 function loadLogoImage(dataUrl) {
   return new Promise(resolve => {
@@ -105,6 +151,14 @@ function templateSketch(id, color) {
       <rect x="8" y="50" width="84" height="18" fill="none" stroke="#bbb" stroke-width=".8"/><rect x="54" y="72" width="38" height="6" fill="${color}"/>`,
     minimal: `<rect x="8" y="9" width="30" height="8" fill="#222"/><rect x="8" y="24" width="20" height="10" fill="${lt}"/><rect x="38" y="24" width="20" height="10" fill="${lt}"/>
       <rect x="8" y="44" width="84" height="7" fill="${color}" opacity=".25"/><rect x="8" y="57" width="84" height="1" fill="#ccc"/><rect x="60" y="70" width="32" height="5" fill="${color}"/>`,
+    bold: `<rect width="100" height="22" fill="#212529"/><rect y="22" width="100" height="3" fill="${color}"/><rect x="64" y="30" width="28" height="13" fill="${color}"/>
+      <rect x="8" y="31" width="22" height="4" fill="${lt}"/><rect x="8" y="50" width="84" height="1.5" fill="#212529"/><rect x="8" y="58" width="84" height="1" fill="#ddd"/><rect x="56" y="68" width="36" height="7" fill="#212529"/>`,
+    elegant: `<rect x="36" y="7" width="28" height="5" fill="#2b2620"/><rect x="26" y="15" width="48" height="2" fill="${lt}"/>
+      <rect x="8" y="21" width="84" height="1" fill="${color}"/><rect x="8" y="23" width="84" height=".5" fill="${color}"/><rect x="40" y="28" width="20" height="5" fill="${color}" opacity=".8"/>
+      <rect x="8" y="44" width="84" height=".8" fill="${color}"/><rect x="8" y="51" width="84" height=".8" fill="${color}"/><rect x="62" y="70" width="30" height="4" fill="${color}"/>`,
+    sidebar: `<rect width="33" height="84" fill="${color}"/><rect x="6" y="8" width="16" height="6" fill="#fff" opacity=".9"/><rect x="6" y="22" width="20" height="3" fill="#fff" opacity=".5"/>
+      <rect x="6" y="30" width="18" height="3" fill="#fff" opacity=".5"/><rect x="40" y="10" width="30" height="5" fill="#333"/><rect x="40" y="30" width="52" height="6" fill="${color}" opacity=".2"/>
+      <rect x="40" y="42" width="52" height="1" fill="#ddd"/><rect x="40" y="50" width="52" height="1" fill="#ddd"/><rect x="66" y="66" width="26" height="5" fill="${color}"/>`,
   }[id];
   return `<svg viewBox="0 0 100 84"><rect width="100" height="84" fill="#fff"/>${body}</svg>`;
 }
@@ -379,7 +433,7 @@ $('#download').onclick = async () => {
   const entry = {
     id: uid(), savedAt: new Date().toISOString(), pageSize: settings.pageSize,
     inv: clone(draft), c: clone(c), me: clone(settings.me || {}), lines: priced(draft.items, c),
-    design: clone(designNow()), taxLabel: settings.taxLabel || 'VAT',
+    design: clone(designNow()), taxLabel: settings.taxLabel || 'VAT', bank: clone(settings.bank || {}),
   };
   const t = invoiceTotals(entry.lines, entry.c);
   entry.total = t.total; entry.subtotal = t.subtotal; entry.tax = t.tax;
@@ -648,7 +702,8 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
   settings.nextNumber = nextNumberValue();
   settings.taxLabel ||= 'VAT';
   if (settings.logo && store.loadLogo) logo = await loadLogoImage(await store.loadLogo(settings.logo));
-  renderDesign();
+  if (settings.bank?.logo && store.loadLogo) bankLogo = await loadLogoImage(await store.loadLogo(settings.bank.logo));
+  renderDesign(); renderBank();
   draft = settings.draft && client(settings.draft.clientId)
     ? { ...settings.draft, items: settings.draft.items.map(normItem) }
     : newDraft();

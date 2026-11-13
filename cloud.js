@@ -90,8 +90,15 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
 
   // ---------- sign in / out ----------
   // Starts the local callback server, opens the browser, and resolves with the one-time code.
+  // The browser tab can be closed without finishing, so a wait can be cancelled (or replaced by
+  // signing in again) and gives up by itself after 3 minutes.
+  let abortWait = null, waitClosed = Promise.resolve();
+  function cancelled() { const e = new Error('Sign-in was cancelled.'); e.cancelled = true; return e; }
+  function cancelSignIn() { if (abortWait) abortWait(cancelled()); return waitClosed; }
   function waitForCode(authorizeUrl) {
     return new Promise((resolve, reject) => {
+      let done = false, closed;
+      waitClosed = new Promise(r => { closed = r; });
       const page = (title, text) => `<!doctype html><meta charset="utf-8"><title>${title}</title><body style="font:16px system-ui,sans-serif;display:grid;place-items:center;height:90vh;color:#333"><div style="text-align:center"><h2>${title}</h2><p>${text}</p></div>`;
       const server = http.createServer((req, res) => {
         const u = new URL(req.url, REDIRECT);
@@ -101,8 +108,13 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
         res.end(code ? page('You\'re signed in', 'You can close this tab and go back to Invoicer.') : page('Sign-in didn\'t finish', err || 'Go back to Invoicer and try again.'));
         finish(code ? null : new Error(err || 'Sign-in was cancelled'), code);
       });
-      const timer = setTimeout(() => finish(new Error('Sign-in timed out. Try again.')), 5 * 60 * 1000);
-      function finish(err, code) { clearTimeout(timer); server.close(); err ? reject(err) : resolve(code); }
+      const timer = setTimeout(() => finish(new Error('Sign-in timed out. Try again.')), 3 * 60 * 1000);
+      function finish(err, code) {
+        if (done) return; done = true; abortWait = null; clearTimeout(timer);
+        server.close(() => closed()); server.closeAllConnections(); // free the port straight away
+        err ? reject(err) : resolve(code);
+      }
+      abortWait = finish;
       server.on('error', e => finish(new Error(e.code === 'EADDRINUSE' ? `Port ${PORT} is in use by another program, so sign-in can't finish.` : e.message)));
       server.listen(PORT, '127.0.0.1', () => {
         if (process.env.INVOICER_AUTH_TEST) fetch(authorizeUrl).catch(() => {}); // tests: follow the redirects without a browser
@@ -112,6 +124,7 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
   }
   async function signIn() {
     if (!url || !key) throw new Error('Cloud sync is not set up in this version.');
+    await cancelSignIn(); // clicking Sign in again starts over
     busy = 'signing-in'; error = ''; report();
     try {
       const verifier = b64url(crypto.randomBytes(48));
@@ -126,7 +139,10 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
       busy = null; report();
       await firstSync();
       return status();
-    } catch (e) { busy = null; error = e.message; report(); throw e; }
+    } catch (e) {
+      if (e.cancelled) { if (busy === 'signing-in' && !abortWait) { busy = null; report(); } throw e; }
+      busy = null; error = e.message; report(); throw e;
+    }
   }
   async function signOut() {
     try { if (signedIn()) await request('/auth/v1/logout', { method: 'POST' }); } catch (e) { /* signing out locally is what matters */ }
@@ -271,7 +287,7 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
   let lastFocusSync = 0;
   setInterval(() => sync('timer'), 5 * 60 * 1000);
   return {
-    status, signIn, signOut, sync, markDirty, firstSync, deleteCloudData,
+    status, signIn, cancelSignIn, signOut, sync, markDirty, firstSync, deleteCloudData,
     onFocus() { if (Date.now() - lastFocusSync > 60 * 1000) { lastFocusSync = Date.now(); sync('focus'); } },
   };
 }

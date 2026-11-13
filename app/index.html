@@ -111,6 +111,7 @@
       <p class="muted">Sign in with Google to keep your clients, settings, logos and invoice history in your own private account, and use them on your other computers. Your PDF files stay on this computer. <a href="https://bryceh1996.github.io/invoicer/privacy.html" id="privacy-link">Privacy policy</a></p>
       <div class="actions">
         <button class="btn primary" id="cloud-signin">Sign in with Google</button>
+        <button class="btn" id="cloud-cancel" hidden>Cancel</button>
         <button class="btn" id="cloud-sync" hidden>Sync now</button>
         <button class="btn" id="cloud-signout" hidden>Sign out</button>
         <button class="btn danger" id="cloud-delete" hidden>Delete my cloud data</button>
@@ -164,8 +165,12 @@
       <h3>Invoice design</h3>
       <label>Template</label>
       <div class="templates" id="design-templates"></div>
-      <label>Colour</label>
+      <label>Colour one</label>
       <div class="swatches" id="design-swatches"></div>
+      <div id="design-two" hidden>
+        <label>Colour two <span class="muted" id="design-two-what"></span></label>
+        <div class="swatches" id="design-swatches2"></div>
+      </div>
       <label>Logo</label>
       <div class="logo-row">
         <div class="logo-box" id="logo-box"><span class="muted">No logo</span></div>

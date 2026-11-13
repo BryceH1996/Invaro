@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('api', {
   platform: process.platform,
   cloudStatus: () => ipcRenderer.invoke('cloud:status'),
   cloudSignIn: () => ipcRenderer.invoke('cloud:signIn'),
+  cloudCancelSignIn: () => ipcRenderer.invoke('cloud:cancelSignIn'),
   cloudSignOut: () => ipcRenderer.invoke('cloud:signOut'),
   cloudSync: () => ipcRenderer.invoke('cloud:sync'),
   cloudDelete: () => ipcRenderer.invoke('cloud:delete'),

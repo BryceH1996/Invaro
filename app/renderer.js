@@ -142,17 +142,18 @@ function loadLogoImage(dataUrl) {
 }
 function designNow() { return resolveDesign(settings.design); }
 // Small sketches of each template for the picker, drawn in the chosen colour.
-function templateSketch(id, color) {
+function templateSketch(id, color, c2) {
+  c2 = c2 || color;
   const lt = 'rgba(0,0,0,.08)';
   const body = {
-    classic: `<rect x="8" y="10" width="44" height="22" fill="${color}" opacity=".35"/><rect x="52" y="10" width="40" height="22" fill="${color}"/>
-      <rect x="8" y="44" width="84" height="6" fill="${color}"/><rect x="8" y="56" width="84" height="5" fill="${lt}"/><rect x="8" y="66" width="84" height="5" fill="${color}" opacity=".3"/>`,
-    wave: `<path d="M0 0H100V22C70 30 40 24 0 36Z" fill="${color}"/><rect x="8" y="44" width="84" height="6" fill="${color}"/>
+    classic: `<rect x="8" y="10" width="44" height="22" fill="${c2}"/><rect x="52" y="10" width="40" height="22" fill="${color}"/>
+      <rect x="8" y="44" width="84" height="6" fill="${color}"/><rect x="8" y="56" width="84" height="5" fill="${lt}"/><rect x="8" y="66" width="84" height="5" fill="${c2}" opacity=".6"/>`,
+    wave: `<path d="M0 0H100V22C70 30 40 24 0 36Z" fill="${color}"/><path d="M62 0H100V22C88 25 76 26 62 27Z" fill="${c2}"/><rect x="8" y="44" width="84" height="6" fill="${color}"/>
       <rect x="8" y="50" width="84" height="18" fill="none" stroke="#bbb" stroke-width=".8"/><rect x="54" y="72" width="38" height="6" fill="${color}"/>`,
     minimal: `<rect x="8" y="9" width="30" height="8" fill="#222"/><rect x="8" y="24" width="20" height="10" fill="${lt}"/><rect x="38" y="24" width="20" height="10" fill="${lt}"/>
       <rect x="8" y="44" width="84" height="7" fill="${color}" opacity=".25"/><rect x="8" y="57" width="84" height="1" fill="#ccc"/><rect x="60" y="70" width="32" height="5" fill="${color}"/>`,
-    bold: `<rect width="100" height="22" fill="#212529"/><rect y="22" width="100" height="3" fill="${color}"/><rect x="64" y="30" width="28" height="13" fill="${color}"/>
-      <rect x="8" y="31" width="22" height="4" fill="${lt}"/><rect x="8" y="50" width="84" height="1.5" fill="#212529"/><rect x="8" y="58" width="84" height="1" fill="#ddd"/><rect x="56" y="68" width="36" height="7" fill="#212529"/>`,
+    bold: `<rect width="100" height="22" fill="${c2}"/><rect y="22" width="100" height="3" fill="${color}"/><rect x="64" y="30" width="28" height="13" fill="${color}"/>
+      <rect x="8" y="31" width="22" height="4" fill="${lt}"/><rect x="8" y="50" width="84" height="1.5" fill="${c2}"/><rect x="8" y="58" width="84" height="1" fill="#ddd"/><rect x="56" y="68" width="36" height="7" fill="${c2}"/>`,
     elegant: `<rect x="36" y="7" width="28" height="5" fill="#2b2620"/><rect x="26" y="15" width="48" height="2" fill="${lt}"/>
       <rect x="8" y="21" width="84" height="1" fill="${color}"/><rect x="8" y="23" width="84" height=".5" fill="${color}"/><rect x="40" y="28" width="20" height="5" fill="${color}" opacity=".8"/>
       <rect x="8" y="44" width="84" height=".8" fill="${color}"/><rect x="8" y="51" width="84" height=".8" fill="${color}"/><rect x="62" y="70" width="30" height="4" fill="${color}"/>`,
@@ -160,13 +161,13 @@ function templateSketch(id, color) {
       <rect x="6" y="30" width="18" height="3" fill="#fff" opacity=".5"/><rect x="40" y="10" width="30" height="5" fill="#333"/><rect x="40" y="30" width="52" height="6" fill="${color}" opacity=".2"/>
       <rect x="40" y="42" width="52" height="1" fill="#ddd"/><rect x="40" y="50" width="52" height="1" fill="#ddd"/><rect x="66" y="66" width="26" height="5" fill="${color}"/>`,
     corporate: `<rect width="100" height="3" fill="${color}"/><rect x="8" y="9" width="16" height="7" fill="${lt}"/><rect x="66" y="9" width="26" height="3" fill="#333"/>
-      <rect x="8" y="22" width="26" height="5" fill="${color}" opacity=".8"/><rect x="8" y="31" width="40" height="11" rx="2" fill="#eef0f3"/><rect x="52" y="31" width="40" height="11" rx="2" fill="#eef0f3"/>
+      <rect x="8" y="22" width="26" height="5" fill="${c2}"/><rect x="8" y="31" width="40" height="11" rx="2" fill="#eef0f3"/><rect x="52" y="31" width="40" height="11" rx="2" fill="#eef0f3"/>
       <rect x="8" y="47" width="84" height="5" fill="${color}"/><rect x="8" y="57" width="84" height="4" fill="#eef0f3"/><rect x="60" y="66" width="32" height="10" rx="2" fill="#eef0f3"/>`,
     mono: `<rect x="34" y="8" width="32" height="4" fill="#333"/><rect x="28" y="15" width="44" height="2" fill="${lt}"/>
       <line x1="8" y1="22" x2="92" y2="22" stroke="#888" stroke-dasharray="2 1.5"/><rect x="34" y="27" width="32" height="5" fill="${color}"/>
       <line x1="8" y1="38" x2="92" y2="38" stroke="#888" stroke-dasharray="2 1.5"/><rect x="8" y="44" width="84" height="2" fill="${lt}"/><rect x="8" y="50" width="84" height="2" fill="${lt}"/>
       <line x1="8" y1="58" x2="92" y2="58" stroke="#888" stroke-dasharray="2 1.5"/><rect x="62" y="64" width="30" height="5" fill="${color}"/>`,
-    geometric: `<polygon points="62,0 100,0 100,38" fill="${color}"/><polygon points="80,0 100,0 100,20" fill="#fff" opacity=".45"/><polygon points="0,68 0,84 16,84" fill="${color}" opacity=".35"/>
+    geometric: `<polygon points="62,0 100,0 100,38" fill="${color}"/><polygon points="80,0 100,0 100,20" fill="${c2}"/><polygon points="0,68 0,84 16,84" fill="${c2}" opacity=".6"/>
       <rect x="8" y="12" width="34" height="7" fill="#222"/><rect x="8" y="22" width="12" height="2" fill="${color}"/><rect x="8" y="34" width="84" height="1.5" fill="${color}"/>
       <rect x="8" y="42" width="84" height="1" fill="#ddd"/><rect x="8" y="50" width="84" height="1" fill="#ddd"/><rect x="58" y="62" width="34" height="8" rx="4" fill="${color}"/>`,
   }[id];
@@ -175,31 +176,59 @@ function templateSketch(id, color) {
 function renderDesign() {
   const d = designNow();
   $('#design-templates').innerHTML = Object.entries(TEMPLATES).map(([id, t]) =>
-    `<button data-template="${id}" class="${id === d.template ? 'on' : ''}" title="${t.name}">${templateSketch(id, (settings.design?.colors?.[id]) || t.color)}${t.name}</button>`).join('');
+    `<button data-template="${id}" class="${id === d.template ? 'on' : ''}" title="${t.name}">${templateSketch(id, ...sketchColors(id))}${t.name}</button>`).join('');
   const swatches = [...new Set([TEMPLATES[d.template].color, ...SWATCHES])];
   $('#design-swatches').innerHTML = swatches.map(c =>
     `<button data-color="${c}" style="background:${c}" class="${c === d.color.toLowerCase() ? 'on' : ''}" title="${c}"></button>`).join('')
     + `<label title="Pick any colour"><input type="color" id="design-custom" value="${d.color}"> Custom</label>`;
+  // Colour two, for templates that use two colours
+  const two = TWO_TONE[d.template];
+  $('#design-two').hidden = !two;
+  if (two) {
+    const auto = rgbHex(secondColor({ ...d, color2: null }));
+    const cur = d.color2 || auto;
+    $('#design-two-what').textContent = two.label + (d.color2 ? '' : ' (automatic until you pick one)');
+    $('#design-swatches2').innerHTML = `<button class="auto ${d.color2 ? '' : 'on'}" data-color2="" title="Automatic: ${auto}" style="--c:${auto}">Auto</button>`
+      + [...new Set([d.color, ...SWATCHES])].map(c =>
+        `<button data-color2="${c}" style="background:${c}" class="${c === d.color2 ? 'on' : ''}" title="${c}"></button>`).join('')
+      + `<label title="Pick any colour"><input type="color" id="design-custom2" value="${cur}"> Custom</label>`;
+  }
   $('#logo-box').innerHTML = logo ? `<img src="${logo.data}" alt="Your logo">` : '<span class="muted">No logo</span>';
   $('#logo-remove').hidden = !logo;
 }
-function setDesign(patch) {
+// Colours for a template's sketch: colour one, and colour two (yours, or its tone of colour one).
+function sketchColors(id) {
+  const d = resolveDesign({ template: id, colors: settings.design?.colors, colors2: settings.design?.colors2 });
+  return [d.color, TWO_TONE[id] ? rgbHex(secondColor(d)) : null];
+}
+// Settings keep a colour one and (optionally) a colour two per template; '' for colour two means Auto.
+function designWith(patch) {
   const d = designNow();
-  const next = { template: d.template, colors: { ...(settings.design?.colors || {}) } };
+  const next = { template: d.template, colors: { ...(settings.design?.colors || {}) }, colors2: { ...(settings.design?.colors2 || {}) } };
   if (patch.template) next.template = patch.template;
   if (patch.color) next.colors[next.template] = patch.color;
-  settings.design = next;
+  if ('color2' in patch) { if (patch.color2) next.colors2[next.template] = patch.color2; else delete next.colors2[next.template]; }
+  return next;
+}
+function setDesign(patch) {
+  settings.design = designWith(patch);
   persist('settings'); renderDesign(); refreshPreview(0);
 }
 $('#design-templates').onclick = e => { const b = e.target.closest('[data-template]'); if (b) setDesign({ template: b.dataset.template }); };
 $('#design-swatches').onclick = e => { const b = e.target.closest('[data-color]'); if (b) setDesign({ color: b.dataset.color }); };
 $('#design-swatches').addEventListener('input', e => {
   if (e.target.id !== 'design-custom') return;
-  const d = designNow();
-  settings.design = { template: d.template, colors: { ...(settings.design?.colors || {}), [d.template]: e.target.value } };
+  settings.design = designWith({ color: e.target.value });
   persist('settings'); refreshPreview(); // live while dragging; swatches re-render on change
 });
 $('#design-swatches').addEventListener('change', e => { if (e.target.id === 'design-custom') renderDesign(); });
+$('#design-swatches2').onclick = e => { const b = e.target.closest('[data-color2]'); if (b) setDesign({ color2: b.dataset.color2 }); };
+$('#design-swatches2').addEventListener('input', e => {
+  if (e.target.id !== 'design-custom2') return;
+  settings.design = designWith({ color2: e.target.value });
+  persist('settings'); refreshPreview();
+});
+$('#design-swatches2').addEventListener('change', e => { if (e.target.id === 'design-custom2') renderDesign(); });
 $('#logo-choose').onclick = async () => {
   if (!store.chooseLogo) return toast('Logos are only available in the desktop app.');
   const r = await store.chooseLogo();
@@ -910,15 +939,16 @@ let cloudState = { configured: false };
 function renderCloud(s) {
   cloudState = s || cloudState;
   const c = cloudState, el = $('#cloud-status'), pill = $('#cloud-pill');
-  if (!c.configured) { el.className = 'drive-status'; el.textContent = 'Sign-in is only available in the desktop app.'; $('#cloud-signin').hidden = true; pill.hidden = true; return; }
+  if (!c.configured) { el.className = 'drive-status'; el.textContent = 'Sign-in is only available in the desktop app.'; $('#cloud-signin').hidden = true; $('#cloud-cancel').hidden = true; pill.hidden = true; return; }
+  const waiting = c.busy === 'signing-in';
   $('#cloud-signin').hidden = c.signedIn;
-  $('#cloud-signin').disabled = c.busy === 'signing-in';
-  $('#cloud-signin').textContent = c.busy === 'signing-in' ? 'Waiting for the browser…' : 'Sign in with Google';
+  $('#cloud-signin').textContent = waiting ? 'Open the sign-in page again' : 'Sign in with Google';
+  $('#cloud-cancel').hidden = !waiting;
   for (const id of ['#cloud-sync', '#cloud-signout', '#cloud-delete']) $(id).hidden = !c.signedIn;
   $('#cloud-sync').disabled = !!c.busy;
   if (!c.signedIn) {
     el.className = 'drive-status' + (c.error ? ' err' : '');
-    el.textContent = c.busy === 'signing-in' ? 'Finish signing in with Google in your browser…' : c.error ? `Not signed in. ${c.error}` : 'Not signed in. Your data is only on this computer.';
+    el.textContent = waiting ? 'Finish signing in with Google in your browser. Closed that tab? Open it again, or Cancel.' : c.error ? `Not signed in. ${c.error}` : 'Not signed in. Your data is only on this computer.';
     pill.hidden = true;
     return;
   }
@@ -935,9 +965,11 @@ $('#privacy-link').onclick = e => { e.preventDefault(); store.openExternal && st
 $('#cloud-signin').onclick = async () => {
   await flushSaves();
   const r = await store.cloudSignIn();
-  if (r && r.error) toast(r.error); else toast('Signed in. Your data is now backed up to your account.');
+  if (r && r.error) { if (!/cancelled/i.test(r.error)) toast(r.error); }
+  else toast('Signed in. Your data is now backed up to your account.');
   renderCloud(await store.cloudStatus());
 };
+$('#cloud-cancel').onclick = async () => { await store.cloudCancelSignIn(); renderCloud(await store.cloudStatus()); };
 $('#cloud-sync').onclick = async () => { await flushSaves(); const r = await store.cloudSync(); if (r && r.error) toast(r.error); };
 $('#cloud-signout').onclick = async () => {
   if (!confirm('Sign out? Your data stays on this computer and in your account; it just stops syncing.')) return;

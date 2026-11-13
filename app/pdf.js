@@ -46,7 +46,27 @@ function resolveDesign(design) {
   const template = TEMPLATES[design && design.template] ? design.template : 'classic';
   const color = design && ok(design.color) ? design.color
     : design && design.colors && ok(design.colors[template]) ? design.colors[template] : TEMPLATES[template].color;
-  return { template, color: color.toLowerCase() };
+  // Colour two: only on two-colour templates, and only when you've picked one; otherwise
+  // the template uses its own tone of colour one.
+  const color2 = !TWO_TONE[template] ? null : design && ok(design.color2) ? design.color2
+    : design && !design.color && design.colors2 && ok(design.colors2[template]) ? design.colors2[template] : null;
+  return { template, color: color.toLowerCase(), color2: color2 ? color2.toLowerCase() : null };
+}
+const rgbHex = rgb => '#' + rgb.map(v => v.toString(16).padStart(2, '0')).join('');
+// Templates that use a second colour, what it paints, and its default: a tone of colour one
+// (Bold keeps its charcoal header, Classic its pale gold with the original gold).
+const TWO_TONE = {
+  classic: { label: 'Light panel and table rows', tone: (a, isDefault) => isDefault ? [255, 229, 153] : tint(a, 0.72) },
+  wave: { label: 'Darker header panel and “Thank You!”', tone: a => shade(a, 0.25) },
+  bold: { label: 'Header band and total', tone: () => [33, 37, 41] },
+  corporate: { label: 'Heading and total due', tone: a => shade(a, 0.35) },
+  geometric: { label: 'Inner and corner triangles', tone: a => tint(a, 0.45) },
+};
+// Colour two as RGB: the one you picked, or the template's tone of colour one.
+function secondColor(d) {
+  if (!TWO_TONE[d.template]) return null;
+  if (d.color2) return hexRgb(d.color2);
+  return TWO_TONE[d.template].tone(hexRgb(d.color), d.color === TEMPLATES[d.template].color);
 }
 
 // ---------- EFT / banking details ----------
@@ -149,7 +169,8 @@ function buildPdf(opts) {
   const doc = new jsPDF({ unit: 'pt', format: opts.pageSize || 'letter' });
   const d = resolveDesign(opts.design);
   const ctx = { ...opts, doc, W: doc.internal.pageSize.getWidth(), H: doc.internal.pageSize.getHeight(),
-    accent: hexRgb(d.color), isDefaultColor: d.color.toLowerCase() === TEMPLATES[d.template].color,
+    accent: hexRgb(d.color), second: secondColor(d), customSecond: !!d.color2,
+    isDefaultColor: d.color.toLowerCase() === TEMPLATES[d.template].color,
     totals: invoiceTotals(opts.lines, opts.c), taxLabel: opts.taxLabel || 'VAT', cur: opts.c.currency || '' };
   ({ classic: drawClassic, wave: drawWave, minimal: drawMinimal, bold: drawBold, elegant: drawElegant, sidebar: drawSidebar, corporate: drawCorporate, mono: drawMono, geometric: drawGeometric })[d.template](ctx);
   return doc;
@@ -164,10 +185,11 @@ function textBlock(doc, lines, x, y, step, width, align) {
 }
 
 // ---------- Classic ----------
-function drawClassic({ doc, W, me, c, inv, lines, logo, bank, bankLogo, accent, isDefaultColor, totals, taxLabel, cur }) {
+function drawClassic({ doc, W, me, c, inv, lines, logo, bank, bankLogo, accent, second, isDefaultColor, totals, taxLabel, cur }) {
   const L = (W - 469) / 2, R = L + 469, M = L + 264;
   const DARK = accent;
-  const LIGHT = isDefaultColor ? [255, 229, 153] : tint(accent, 0.72);
+  const LIGHT = second, INK2 = isLight(LIGHT) ? 0 : 255;
+  const ROW = isLight(LIGHT) ? LIGHT : tint(LIGHT, 0.75); // table stripes stay pale enough for black text
   const RULE = isDefaultColor ? [74, 143, 176] : accent;
   const ON = isLight(DARK) ? 0 : 255;
 
@@ -189,15 +211,16 @@ function drawClassic({ doc, W, me, c, inv, lines, logo, bank, bankLogo, accent, 
   let nameGap = 28, step = 19.5;
   if (first + nameGap + step * gaps > 241) { nameGap = 15; step = gaps ? Math.max(10.5, (241 - first - nameGap) / gaps) : 0; }
   let y = 241 - step * gaps;
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(step < 15 ? 9 : 11); doc.setTextColor(0);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(step < 15 ? 9 : 11); doc.setTextColor(INK2);
   doc.text(heading, L + 6, Math.max(y - nameGap, first));
   for (const ln of rows) {
     if (ln === EMAIL) {
-      doc.setTextColor(17, 85, 204);
+      const LINK = INK2 ? [255, 255, 255] : [17, 85, 204];
+      doc.setTextColor(...LINK);
       doc.textWithLink(me.email, L + 6, y, { url: 'mailto:' + me.email });
-      doc.setDrawColor(17, 85, 204); doc.setLineWidth(0.6);
+      doc.setDrawColor(...LINK); doc.setLineWidth(0.6);
       doc.line(L + 6, y + 1.6, L + 6 + doc.getTextWidth(me.email), y + 1.6);
-      doc.setTextColor(0);
+      doc.setTextColor(INK2);
     } else doc.text(ln, L + 6, y);
     y += step;
   }
@@ -230,7 +253,7 @@ function drawClassic({ doc, W, me, c, inv, lines, logo, bank, bankLogo, accent, 
   // rows
   const n = Math.max((totals.tax ? 7 : 8) - (bankRows(bank, inv).length ? 3 : 0), lines.length);
   for (let i = 0; i < n; i++) {
-    if (i % 2 === 1) { doc.setFillColor(...LIGHT); doc.rect(L, t, R - L, 30, 'F'); }
+    if (i % 2 === 1) { doc.setFillColor(...ROW); doc.rect(L, t, R - L, 30, 'F'); }
     const it = lines[i];
     if (it) {
       doc.setFontSize(11); doc.setTextColor(0);
@@ -322,10 +345,10 @@ function itemTable(doc, { x, w, y, lines, cur, minRows, rowH, header, font = 'he
 }
 
 // ---------- Wave ----------
-function drawWave({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, totals, taxLabel, cur }) {
+function drawWave({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, second, totals, taxLabel, cur }) {
   const L = 40, R = W - 40;
   const ON = isLight(accent) ? 30 : 255;
-  const deep = shade(accent, 0.25), soft = tint(accent, 0.3);
+  const deep = second, soft = tint(accent, 0.3);
 
   // curved header band, with a lighter streak across it
   doc.setFillColor(...accent);
@@ -510,8 +533,9 @@ const totalRows = (totals, taxLabel) => [['Subtotal', totals.subtotal], ...(tota
 
 // ---------- Bold ----------
 // Dark header band with a colour stripe, a coloured "Amount due" block, and a dark total bar.
-function drawBold({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, totals, taxLabel, cur }) {
-  const L = 40, R = W - 40, DARK = [33, 37, 41], ON = isLight(accent) ? 20 : 255;
+function drawBold({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, second, totals, taxLabel, cur }) {
+  const L = 40, R = W - 40, DARK = second, ON = isLight(accent) ? 20 : 255;
+  const lightHead = isLight(DARK), HEAD = lightHead ? 20 : 255, HEAD_SUB = lightHead ? 80 : 190;
   const hasBank = bankRows(bank, inv).length > 0;
 
   // header band
@@ -520,11 +544,11 @@ function drawBold({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, 
   let hy = 52;
   const th = logoTile(doc, logo, L, 18, 130, 34);
   if (th) hy = 18 + th + 20;
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(th ? 13 : 18); doc.setTextColor(255);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(th ? 13 : 18); doc.setTextColor(HEAD);
   doc.text(me.company || me.name || '', L, hy);
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(190);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(HEAD_SUB);
   doc.text([me.email, me.phone].filter(Boolean).join('   ·   '), L, hy + 14);
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(32); doc.setTextColor(255);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(32); doc.setTextColor(HEAD);
   doc.text(docWords(inv).TITLE, R, 66, { align: 'right' });
   doc.setFontSize(12); doc.setTextColor(...accent);
   doc.text(`# ${inv.number || ''}`, R, 88, { align: 'right' });
@@ -570,8 +594,8 @@ function drawBold({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(70);
   for (const [k, v] of totalRows(totals, taxLabel)) { doc.text(k, tx, ty); doc.text(money(v, cur), R - 10, ty, { align: 'right' }); ty += 18; }
   doc.setFillColor(...DARK); doc.rect(tx - 10, ty - 6, R - tx + 10, 30, 'F');
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(255); doc.text('TOTAL', tx, ty + 13);
-  doc.setFontSize(13); doc.setTextColor(...(isLight(accent) ? [255, 255, 255] : tint(accent, 0.15))); doc.text(money(totals.total, cur), R - 10, ty + 14, { align: 'right' });
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(HEAD); doc.text('TOTAL', tx, ty + 13);
+  doc.setFontSize(13); doc.setTextColor(...(lightHead ? [20, 20, 20] : isLight(accent) ? [255, 255, 255] : tint(accent, 0.15))); doc.text(money(totals.total, cur), R - 10, ty + 14, { align: 'right' });
   y = ty + 46;
 
   // banking details, notes, footer
@@ -742,8 +766,8 @@ function drawSidebar({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accen
 // ---------- Corporate ----------
 // Thin colour band, logo left with your details right, grey info cards, a striped table, and a
 // footer line with your registration details.
-function drawCorporate({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, totals, taxLabel, cur }) {
-  const L = 44, R = W - 44, w = docWords(inv), GREY = [244, 245, 247], DARK = shade(accent, 0.35);
+function drawCorporate({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, second, totals, taxLabel, cur }) {
+  const L = 44, R = W - 44, w = docWords(inv), GREY = [244, 245, 247], DARK = second;
   const hasBank = bankRows(bank, inv).length > 0;
   doc.setFillColor(...accent); doc.rect(0, 0, W, 8, 'F');
 
@@ -876,12 +900,12 @@ function drawMono({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, 
 
 // ---------- Geometric ----------
 // Colour triangles in the corners, a bold title with a colour bar, and the total in a coloured pill.
-function drawGeometric({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, totals, taxLabel, cur }) {
+function drawGeometric({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, second, customSecond, totals, taxLabel, cur }) {
   const L = 48, R = W - 48, w = docWords(inv), INK = [30, 30, 36], ON = isLight(accent) ? 20 : 255;
   const hasBank = bankRows(bank, inv).length > 0;
   doc.setFillColor(...accent); doc.triangle(W - 210, 0, W, 0, W, 210, 'F');
-  doc.setFillColor(...tint(accent, 0.45)); doc.triangle(W - 120, 0, W, 0, W, 120, 'F');
-  doc.setFillColor(...tint(accent, 0.7)); doc.triangle(0, H - 90, 0, H, 90, H, 'F');
+  doc.setFillColor(...second); doc.triangle(W - 120, 0, W, 0, W, 120, 'F');
+  doc.setFillColor(...(customSecond ? second : tint(accent, 0.7))); doc.triangle(0, H - 90, 0, H, 90, H, 'F');
 
   let y = 48;
   const lb = logoBox(logo, 150, 46);

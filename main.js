@@ -155,6 +155,7 @@ function startCloud() {
 }
 ipcMain.handle('cloud:status', () => cloud ? cloud.status() : { configured: false });
 ipcMain.handle('cloud:signIn', safe(() => cloud.signIn()));
+ipcMain.handle('cloud:cancelSignIn', safe(() => cloud.cancelSignIn()));
 ipcMain.handle('cloud:signOut', safe(() => cloud.signOut()));
 ipcMain.handle('cloud:sync', safe(() => cloud.sync('button')));
 ipcMain.handle('cloud:delete', safe(() => cloud.deleteCloudData()));

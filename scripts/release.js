@@ -55,6 +55,8 @@ function releaseLocally() {
   if (branch !== 'main') fail(`Releases are made from the main branch (you're on "${branch}").`);
 
   // ---- 2. build ----
+  // The Google Drive OAuth client is kept out of git (see SYNC.md); without it, Connect Google Drive is hidden.
+  if (!noBuild && !fs.existsSync(path.join(root, 'gdrive.config.json'))) fail('Missing gdrive.config.json (the Google Drive client). See SYNC.md.');
   if (!noBuild) {
     console.log(`Building Invaro ${pkg.version}…`);
     const r = spawnSync('npx', ['electron-builder', '--win', 'nsis', '--publish', 'never'], { cwd: root, stdio: 'inherit', shell: true });

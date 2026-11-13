@@ -6,3 +6,6 @@ dist/
 data/
 updates/
 *.pdf
+
+# Google Drive OAuth client (see SYNC.md). Kept out of git; the Mac build writes it from repo secrets.
+gdrive.config.json

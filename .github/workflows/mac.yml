@@ -35,6 +35,19 @@ jobs:
 
       - run: npm ci
 
+      # The Google Drive OAuth client isn't in git. Without these repo secrets the Mac app
+      # still builds, just without "Connect Google Drive".
+      - name: Add the Google Drive client
+        env:
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+        run: |
+          if [ -n "$GDRIVE_CLIENT_ID" ] && [ -n "$GDRIVE_CLIENT_SECRET" ]; then
+            node -e 'require("fs").writeFileSync("gdrive.config.json", JSON.stringify({ clientId: process.env.GDRIVE_CLIENT_ID, clientSecret: process.env.GDRIVE_CLIENT_SECRET }))'
+          else
+            echo "::warning::GDRIVE_CLIENT_ID / GDRIVE_CLIENT_SECRET aren't set, so this build can't connect Google Drive."
+          fi
+
       - name: Build the universal app (Apple silicon and Intel)
         run: npx electron-builder --mac --publish never
 

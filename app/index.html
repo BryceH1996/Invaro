@@ -195,15 +195,35 @@
         <div><label>Name for tax on invoices</label>
           <select data-set="taxLabel"><option value="VAT">VAT</option><option value="Tax">Tax</option><option value="GST">GST</option><option value="Sales tax">Sales tax</option></select></div>
       </div>
-      <h3>Google Drive backup</h3>
+      <h3>Invoice backup</h3>
+      <div class="row">
+        <div><label>Back up to</label>
+          <select id="drive-provider"><option value="google">Google Drive</option><option value="onedrive">OneDrive</option><option value="other">Other folder</option></select></div>
+        <div hidden><label>Google Drive location</label>
+          <select id="drive-location"><option value="">My Drive</option></select></div>
+        <div id="drive-folder-row" hidden><label for="drive-folder">Folder</label>
+          <div class="folder-field"><input id="drive-folder" placeholder="Invaro Backups" spellcheck="false"><button class="btn" id="drive-browse" type="button">Browse…</button></div></div>
+      </div>
+      <dialog id="folder-dlg" class="folder-dlg">
+        <h3 id="folder-dlg-title">Choose a folder</h3>
+        <p class="muted folder-path" id="folder-dlg-path"></p>
+        <div class="folder-list" id="folder-dlg-list"></div>
+        <div class="actions">
+          <button class="btn" id="folder-dlg-up" type="button">↑ Up</button>
+          <span style="flex:1"></span>
+          <button class="btn" id="folder-dlg-cancel" type="button">Cancel</button>
+          <button class="btn primary" id="folder-dlg-use" type="button">Use this folder</button>
+        </div>
+      </dialog>
       <p class="drive-status" id="drive-status">Checking…</p>
-      <p class="muted">Every saved invoice is copied into <b>My Drive\Invaro Backups</b>, and Google Drive for desktop uploads it to your Google Drive online. Invaro finds your My Drive folder automatically.</p>
+      <p class="muted" id="drive-help"></p>
       <div class="actions">
+        <button class="btn primary" id="gd-connect" hidden>Connect Google Drive</button>
         <button class="btn primary" id="drive-install" hidden>Get Google Drive for desktop</button>
         <button class="btn" id="drive-open" hidden>Open backup folder</button>
         <button class="btn" id="drive-retry" hidden>Back up missing invoices</button>
-        <button class="btn" id="drive-change">Use a different folder…</button>
-        <button class="btn" id="drive-auto" hidden>Go back to My Drive automatically</button>
+        <button class="btn" id="drive-change" hidden>Choose folder…</button>
+        <button class="btn" id="gd-disconnect" hidden>Disconnect Google Drive</button>
       </div>
       <h3>Updates</h3>
       <p class="drive-status" id="upd-status">Checking…</p>

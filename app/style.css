@@ -114,6 +114,17 @@ td .btn { padding:4px 10px; }
 .drive-status { margin:0 0 6px; padding:8px 10px; border-radius:6px; background:var(--mist); font-size:13px; }
 .drive-status.on { background:var(--ok-bg); color:var(--ok-fg); }
 .drive-status.err { background:var(--err-bg); color:var(--err-fg); }
+#drive-folder-row { grid-column:1 / -1; }
+.folder-field { display:flex; gap:8px; }
+.folder-field .btn { white-space:nowrap; padding:6px 12px; }
+.folder-dlg { width:min(440px, calc(100vw - 32px)); border:1px solid var(--border); border-radius:10px; padding:18px; background:var(--surface); color:var(--ink); }
+.folder-dlg::backdrop { background:rgba(14,31,59,.35); }
+.folder-dlg h3 { margin:0 0 4px; }
+.folder-path { margin:0 0 10px; word-break:break-word; }
+.folder-list { height:260px; overflow:auto; border:1px solid var(--border); border-radius:6px; }
+.folder-list button { display:block; width:100%; text-align:left; border:0; border-bottom:1px solid var(--border); background:none; padding:8px 10px; font:inherit; color:var(--ink); cursor:pointer; }
+.folder-list button:hover, .folder-list button:focus-visible { background:var(--mist); }
+.folder-list p { margin:0; padding:10px; }
 button.link { border:0; background:none; padding:0; font:inherit; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; color:var(--brand); }
 button.link.ok { color:var(--ok-fg); }
 button.link.warn { color:var(--err-fg); }

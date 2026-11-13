@@ -228,19 +228,24 @@ ipcMain.handle('logo:choose', safe(async (_e, kind) => {
 }));
 ipcMain.handle('logo:remove', (_e, kind) => { removeLogos(kind); return true; });
 
-// ---------- Google Drive backups ----------
+// ---------- Cloud backups (Google Drive, OneDrive or any folder) ----------
 // Google Drive for desktop shows your Drive as a "My Drive" folder (usually G:\My Drive,
-// or %USERPROFILE%\My Drive in mirror mode) and syncs it online. Invaro copies every
-// saved invoice into "My Drive\Invaro Backups", or into a folder you pick yourself.
+// or %USERPROFILE%\My Drive in mirror mode), and OneDrive keeps a OneDrive folder in your
+// user folder. Both sync that folder with the cloud in both directions. Invaro copies every
+// saved invoice into "<that folder>\Invaro Backups", or into any folder you pick ("other").
 const BACKUP_FOLDER = 'Invaro Backups';
+const PROVIDERS = { google: 'Google Drive', onedrive: 'OneDrive', other: 'your backup folder' };
 const isDir = p => { try { return fs.statSync(p).isDirectory(); } catch (e) { return false; } };
+const cloudStorage = prefix => {
+  const dir = path.join(os.homedir(), 'Library', 'CloudStorage'); // macOS File Provider folders
+  try { return fs.readdirSync(dir).filter(f => f.startsWith(prefix)).map(f => path.join(dir, f)); } catch (e) { return []; }
+};
 function findMyDrive() {
   if (process.env.INVOICER_MYDRIVE) return isDir(process.env.INVOICER_MYDRIVE) ? process.env.INVOICER_MYDRIVE : null;
   const candidates = [];
   if (IS_MAC) {
     // Google Drive for desktop on macOS: ~/Library/CloudStorage/GoogleDrive-<account>/My Drive
-    const cloud = path.join(os.homedir(), 'Library', 'CloudStorage');
-    try { for (const f of fs.readdirSync(cloud)) if (f.startsWith('GoogleDrive')) candidates.push(path.join(cloud, f, 'My Drive')); } catch (e) {}
+    candidates.push(...cloudStorage('GoogleDrive').map(d => path.join(d, 'My Drive')));
     candidates.push('/Volumes/GoogleDrive/My Drive', path.join(os.homedir(), 'Google Drive', 'My Drive'));
   } else {
     candidates.push(...[...'GDEFHIJKLMNOPQRSTUVWXYZ'].map(l => `${l}:\\My Drive`));
@@ -248,22 +253,93 @@ function findMyDrive() {
   candidates.push(path.join(os.homedir(), 'My Drive'));
   return candidates.find(isDir) || null;
 }
-// The folder to back up to: the user's choice, else My Drive\Invaro Backups.
-function backupTarget(chosen) {
-  const myDrive = findMyDrive();
-  const dir = chosen || (myDrive ? keepOld(path.join(myDrive, `${OLD_NAME} Backups`), path.join(myDrive, BACKUP_FOLDER)) : null);
-  return { myDrive, dir, auto: !chosen, ready: !!dir && (isDir(dir) || isDir(path.dirname(dir))) };
+function findOneDrive() {
+  if (process.env.INVOICER_ONEDRIVE) return isDir(process.env.INVOICER_ONEDRIVE) ? process.env.INVOICER_ONEDRIVE : null;
+  // Windows sets OneDrive (personal or work) and OneDriveConsumer / OneDriveCommercial.
+  const candidates = [process.env.OneDriveConsumer, process.env.OneDrive, process.env.OneDriveCommercial].filter(Boolean);
+  if (IS_MAC) candidates.push(...cloudStorage('OneDrive'));
+  candidates.push(path.join(os.homedir(), 'OneDrive'));
+  return candidates.find(isDir) || null;
 }
-ipcMain.handle('backup:status', (_e, chosen) => backupTarget(chosen));
+// Google shared drives (team drives) appear as "Shared drives\<name>" beside My Drive. In mirror
+// mode My Drive moves to the user folder but shared drives stay on the Drive letter, so check both.
+function findSharedDrives() {
+  const roots = [];
+  const myDrive = findMyDrive();
+  if (myDrive) roots.push(path.join(path.dirname(myDrive), 'Shared drives'));
+  if (IS_MAC) roots.push(...cloudStorage('GoogleDrive').map(d => path.join(d, 'Shared drives')));
+  else roots.push(...[...'GDEFHIJKLMNOPQRSTUVWXYZ'].map(l => `${l}:\\Shared drives`));
+  const drives = new Map();
+  for (const r of roots.filter(isDir)) {
+    try {
+      for (const f of fs.readdirSync(r)) if (!drives.has(f) && isDir(path.join(r, f))) drives.set(f, path.join(r, f));
+    } catch (e) {}
+  }
+  return [...drives].map(([name, p]) => ({ name, path: p })).sort((a, b) => a.name.localeCompare(b.name));
+}
+// Google Drive online (gdrive.js): used instead of the My Drive folder once an account is connected,
+// so it works without Google Drive for desktop. Created on first use (safeStorage needs the app ready).
+let gdriveApi = null;
+// The OAuth client lives in gdrive.config.json, which git ignores (see SYNC.md). Without it the
+// Connect button stays hidden.
+const gdriveConfig = () => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'gdrive.config.json'), 'utf8')); } catch (e) { return {}; } };
+const gdrive = () => gdriveApi || (gdriveApi = require('./gdrive').createGDrive({ config: gdriveConfig() }));
+ipcMain.handle('gdrive:status', () => gdrive().status());
+ipcMain.handle('gdrive:connect', safe(() => gdrive().connect()));
+ipcMain.handle('gdrive:cancel', () => gdrive().cancel());
+ipcMain.handle('gdrive:disconnect', safe(() => gdrive().disconnect()));
+
+// The folder inside the drive, as typed or picked ("Finance/Invoices"): split into safe parts.
+// Empty means the default "Invaro Backups". ".." and characters Drive or Windows reject are dropped.
+function folderParts(folder) {
+  const parts = String(folder || '').split(/[\\/]+/).map(p => p.replace(/[<>:"|?*\x00-\x1f]/g, '').trim().replace(/[. ]+$/, ''))
+    .filter(p => p && p !== '.' && p !== '..');
+  return parts.length ? parts : null;
+}
+// sel is { provider, dir, shared, folder }; a plain string is a folder chosen before providers existed.
+// shared is the name of a Google shared drive (empty means My Drive); folder is the path inside the drive.
+function backupTarget(sel) {
+  if (typeof sel === 'string' || !sel) sel = { provider: sel ? 'other' : 'google', dir: sel || '' };
+  const provider = PROVIDERS[sel.provider] ? sel.provider : 'google';
+  const custom = folderParts(sel.folder), parts = custom || [BACKUP_FOLDER];
+  let root = null, dir = null, name = PROVIDERS[provider], shared = null;
+  if (provider === 'google' && gdrive().status().connected) {
+    shared = sel.shared || null;
+    const where = `${shared ? `Shared drives/${shared}` : 'My Drive'}/${parts.join('/')}`;
+    return { provider, online: true, email: gdrive().status().email, name: shared ? `the "${shared}" shared drive` : 'Google Drive',
+      shared, parts, root: where, myDrive: findMyDrive(), dir: where, auto: true, ready: true };
+  }
+  if (provider === 'other') dir = sel.dir || null;
+  else {
+    if (provider === 'google' && sel.shared) {
+      shared = sel.shared;
+      name = `the "${shared}" shared drive`;
+      const found = findSharedDrives().find(d => d.name === shared);
+      root = found ? found.path : null;
+    } else root = provider === 'onedrive' ? findOneDrive() : findMyDrive();
+    if (root) dir = provider === 'google' && !shared && !custom
+      ? keepOld(path.join(root, `${OLD_NAME} Backups`), path.join(root, BACKUP_FOLDER)) : path.join(root, ...parts);
+  }
+  // The sync app's own folder must exist; the folders inside it are created as needed.
+  const base = provider === 'other' ? dir && path.dirname(dir) : root;
+  return { provider, name, shared, parts, root, myDrive: provider === 'google' ? findMyDrive() : undefined, dir, auto: provider !== 'other',
+    ready: !!dir && (isDir(dir) || isDir(base)) };
+}
+ipcMain.handle('backup:status', (_e, sel) => backupTarget(sel));
+ipcMain.handle('backup:sharedDrives', async () => {
+  if (!gdrive().status().connected) return findSharedDrives();
+  try { return await gdrive().listSharedDrives(); } catch (e) { return []; } // offline: the renderer keeps the chosen one
+});
 // Backups mirror the client folders: <backup folder>\<Client>\<file>.
-ipcMain.handle('backup:write', safe((_e, bytes, name, chosen, client) => {
-  const t = backupTarget(chosen);
-  if (!t.dir) throw new Error("Google Drive for desktop isn't installed or signed in");
-  // Create "Invaro Backups" inside an existing folder, but never invent the drive itself:
-  // a missing parent usually means Google Drive isn't running.
+ipcMain.handle('backup:write', safe((_e, bytes, name, sel, client) => {
+  const t = backupTarget(sel);
+  if (t.online) return gdrive().upload({ bytes, name, folders: [...t.parts, folderName(client)], shared: t.shared });
+  if (!t.dir) throw new Error(t.provider === 'other' ? 'No backup folder chosen' : `${t.name} isn't installed or signed in`);
+  // Create the backup folder inside the drive, but never invent the drive itself:
+  // a missing drive folder usually means the sync app isn't running.
   if (!isDir(t.dir)) {
-    if (!isDir(path.dirname(t.dir))) throw new Error(`Can't reach ${t.dir}. Is Google Drive running?`);
-    fs.mkdirSync(t.dir);
+    if (!t.ready) throw new Error(`Can't reach ${t.dir}. Is ${t.provider === 'other' ? 'the drive connected' : t.name + ' running'}?`);
+    fs.mkdirSync(t.dir, { recursive: true });
   }
   const sub = path.join(t.dir, folderName(client));
   fs.mkdirSync(sub, { recursive: true });
@@ -271,22 +347,36 @@ ipcMain.handle('backup:write', safe((_e, bytes, name, chosen, client) => {
   fs.writeFileSync(dest, Buffer.from(bytes));
   return { path: dest };
 }));
-ipcMain.handle('backup:chooseDir', async (_e, current) => {
-  const t = backupTarget(current);
+ipcMain.handle('backup:chooseDir', async (_e, sel) => {
+  const t = backupTarget(sel);
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
     title: 'Choose where invoice backups go',
-    defaultPath: t.dir && isDir(t.dir) ? t.dir : (t.myDrive || app.getPath('documents')),
+    defaultPath: t.dir && isDir(t.dir) ? t.dir : (findMyDrive() || findOneDrive() || app.getPath('documents')),
     properties: ['openDirectory', 'createDirectory'],
   });
   return canceled || !filePaths[0] ? null : filePaths[0];
 });
-ipcMain.handle('backup:open', safe((_e, chosen) => {
-  const t = backupTarget(chosen);
+ipcMain.handle('backup:open', safe(async (_e, sel) => {
+  const t = backupTarget(sel);
+  if (t.online) return shell.openExternal(await gdrive().folderLink(t.parts, t.shared));
   if (!t.dir || !isDir(t.dir)) throw new Error('The backup folder will be created when you save your first invoice.');
   return shell.openPath(t.dir);
 }));
+// For the folder picker: the folders inside <drive>/<path>, where path is an array of names.
+ipcMain.handle('backup:folders', safe(async (_e, sel, parts) => {
+  const t = backupTarget(sel);
+  parts = folderParts((parts || []).join('/')) || [];
+  if (t.online) return gdrive().listFolders(parts, t.shared);
+  if (!t.root || !isDir(t.root)) throw new Error(`Can't reach ${t.name}. Is it running?`);
+  const dir = path.join(t.root, ...parts);
+  if (!isDir(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true })
+    .filter(d => d.isDirectory() && !d.name.startsWith('.') && !(parts.length === 0 && /^\$|^System Volume Information$/i.test(d.name)))
+    .map(d => d.name).sort((a, b) => a.localeCompare(b));
+}));
 // Only these pages can be opened in the browser from the app.
-const EXTERNAL_OK = [/^https:\/\/www\.google\.com\/drive\/download\/$/, /^https:\/\/bryceh1996\.github\.io\/invoicer\/[a-z.-]*$/];
+const EXTERNAL_OK = [/^https:\/\/www\.google\.com\/drive\/download\/$/, /^https:\/\/www\.microsoft\.com\/microsoft-365\/onedrive\/download$/,
+  /^https:\/\/drive\.google\.com\/(file\/d|drive\/folders)\/[\w-]+(\/view)?(\?[\w=&-]*)?$/, /^https:\/\/bryceh1996\.github\.io\/invoicer\/[a-z.-]*$/];
 ipcMain.handle('shell:external', (_e, url) => {
   if (EXTERNAL_OK.some(re => re.test(String(url)))) return shell.openExternal(url);
 });

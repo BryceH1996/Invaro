@@ -23,8 +23,10 @@ const PORT = 47823, REDIRECT = `http://127.0.0.1:${PORT}/auth/callback`;
 const b64url = buf => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, onStatus, parentWindow }) {
-  const url = process.env.INVOICER_CLOUD_URL || config.url;
-  const key = process.env.INVOICER_CLOUD_KEY || config.key;
+  // Test overrides only work when running from source, never in an installed Invaro.
+  const env = app.isPackaged ? {} : process.env;
+  const url = env.INVOICER_CLOUD_URL || config.url;
+  const key = env.INVOICER_CLOUD_KEY || config.key;
   const statePath = () => path.join(app.getPath('userData'), 'cloud.json');
   let state = load();
   let busy = null, error = '', pushTimer = null;
@@ -117,7 +119,7 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
       abortWait = finish;
       server.on('error', e => finish(new Error(e.code === 'EADDRINUSE' ? `Port ${PORT} is in use by another program, so sign-in can't finish.` : e.message)));
       server.listen(PORT, '127.0.0.1', () => {
-        if (process.env.INVOICER_AUTH_TEST) fetch(authorizeUrl).catch(() => {}); // tests: follow the redirects without a browser
+        if (env.INVOICER_AUTH_TEST) fetch(authorizeUrl).catch(() => {}); // tests: follow the redirects without a browser
         else shell.openExternal(authorizeUrl);
       });
     });

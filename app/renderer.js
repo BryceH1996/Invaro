@@ -437,13 +437,22 @@ const pdfBytes = entry => buildPdf(pdfOptions(entry)).output('arraybuffer');
 // Backup copies are prefixed with the invoice number so two invoices in the same month never clash.
 const backupName = entry => `${entry.inv.number} - ${fileName(entry.c, entry.inv, entry.me)}`.replace(/[\\/:*?"<>|]/g, '');
 
-// ---------- Google Drive backup (via Google Drive for desktop's "My Drive" folder) ----------
+// ---------- Invoice backup (Google Drive / OneDrive sync folder, or any folder) ----------
 let backupState = { ready: false };
+// Before 1.16 a chosen folder meant "not Google Drive", so treat it as "other".
+const backupProvider = () => settings.backupProvider || (settings.backupDir ? 'other' : 'google');
+// backupSharedDrive is the name of a Google shared drive; empty means My Drive.
+const backupShared = () => backupProvider() === 'google' ? settings.backupSharedDrive || '' : '';
+// backupFolder is the folder inside Google Drive or OneDrive, e.g. "Finance/Invoices"; empty means "Invaro Backups".
+const backupFolder = () => backupProvider() === 'other' ? '' : settings.backupFolder || '';
+const backupSel = () => ({ provider: backupProvider(), dir: settings.backupDir || '', shared: backupShared(), folder: backupFolder() });
+const backupWhere = () => backupShared() ? `the "${backupShared()}" shared drive`
+  : ({ google: 'Google Drive', onedrive: 'OneDrive', other: 'your backup folder' })[backupProvider()];
 
 // Copies the invoice into the backup folder. Records the result on the history entry; returns true on success.
 async function backupPdf(entry, bytes) {
   if (!store.backupWrite) return false;
-  const res = await store.backupWrite(bytes || pdfBytes(entry), backupName(entry), settings.backupDir || '', entry.c.company);
+  const res = await store.backupWrite(bytes || pdfBytes(entry), backupName(entry), backupSel(), entry.c.company);
   if (res && !res.error) {
     entry.backup = res.path; entry.backupError = null; entry.backedUpAt = new Date().toISOString();
     return true;
@@ -453,11 +462,11 @@ async function backupPdf(entry, bytes) {
   return false;
 }
 
-// Retries any invoices whose backup failed earlier (e.g. Google Drive wasn't running).
+// Retries any invoices whose backup failed earlier (e.g. Google Drive or OneDrive wasn't running).
 let retrying = false;
 async function retryPendingBackups() {
   if (retrying) return;
-  if (store.backupStatus) backupState = await store.backupStatus(settings.backupDir || '');
+  if (store.backupStatus) backupState = await store.backupStatus(backupSel());
   if (!backupState.ready) return;
   const pending = invoices.filter(h => !h.backup && h.backupError !== undefined);
   if (!pending.length) return;
@@ -466,7 +475,7 @@ async function retryPendingBackups() {
   for (const h of pending) if (await backupPdf(h)) ok++;
   retrying = false;
   persist('invoices'); renderHistory(); refreshBackupStatus();
-  if (ok) toast(`Backed up ${ok} invoice${ok === 1 ? '' : 's'} to Google Drive`);
+  if (ok) toast(`Backed up ${ok} invoice${ok === 1 ? '' : 's'} to ${backupWhere()}`);
 }
 
 // Saves the PDF into <data folder>\<Client>\ and backs it up. Returns the saved path, or null on failure.
@@ -480,7 +489,7 @@ async function savePdf(entry) {
   entry.file = path;
   if (window.api) {
     const shown = path.split(/[\\/]/).slice(-2).join(IS_MAC ? '/' : '\\'); // e.g. "Client\Client Invoice - ….pdf"
-    if (await backupPdf(entry, bytes)) toast(`Saved to ${shown} and backed up to Google Drive`, 'Open', () => store.open(path));
+    if (await backupPdf(entry, bytes)) toast(`Saved to ${shown} and backed up to ${backupWhere()}`, 'Open', () => store.open(path));
     else toast(`Saved to ${shown}, but NOT backed up: ${entry.backupError}. It will retry automatically.`, 'Open', () => store.open(path));
   }
   return path;
@@ -655,38 +664,156 @@ $('#change-data').onclick = async () => {
   if (await store.chooseDataDir()) location.reload();
 };
 
-// ---------- Google Drive backup settings ----------
+// ---------- backup settings ----------
+const SEP = IS_MAC ? '/' : '\\';
+const BACKUP_HELP = {
+  google: f => `Every saved invoice is copied into <b>My Drive${SEP}${f}</b>, in a folder per client. Google Drive for desktop uploads it to drive.google.com, and brings down anything changed online. Invaro finds your My Drive folder automatically.`,
+  onedrive: f => `Every saved invoice is copied into <b>OneDrive${SEP}${f}</b>, in a folder per client. The OneDrive app uploads it to onedrive.com, and brings down anything changed online. Invaro finds your OneDrive folder automatically.`,
+  other: () => 'Every saved invoice is copied into a folder you choose: a USB drive, a network share, or the folder of another sync app such as Dropbox or iCloud Drive.',
+};
+// Tidies a typed folder path the same way the main process does: "/Finance\ Invoices/" -> "Finance/Invoices".
+const cleanFolder = f => String(f || '').split(/[\\/]+/).map(p => p.replace(/[<>:"|?*\x00-\x1f]/g, '').trim().replace(/[. ]+$/, ''))
+  .filter(p => p && p !== '.' && p !== '..').join('/');
+const INSTALL = {
+  google: ['Get Google Drive for desktop', 'https://www.google.com/drive/download/'],
+  onedrive: ['Get OneDrive', 'https://www.microsoft.com/microsoft-365/onedrive/download'],
+};
 async function refreshBackupStatus() {
   if (!store.backupStatus) { $('#drive-status').textContent = 'Backups are only available in the desktop app.'; return; }
-  backupState = await store.backupStatus(settings.backupDir || '');
+  const provider = backupProvider();
+  $('#drive-provider').value = provider;
+  const shared = backupShared();
+  const gd = store.gdriveStatus ? await store.gdriveStatus() : { configured: false };
+  const online = provider === 'google' && gd.connected;
+  await refreshSharedDrives();
+  backupState = await store.backupStatus(backupSel());
+  $('#drive-folder-row').hidden = provider === 'other' || !store.backupFolders;
+  if (document.activeElement !== $('#drive-folder')) $('#drive-folder').value = settings.backupFolder || '';
+  const folder = sep => esc((backupState.parts || ['Invaro Backups']).join(sep));
+  $('#drive-help').innerHTML = online
+    ? `Invaro uploads every saved invoice straight to <b>${shared ? `Shared drives/${esc(shared)}` : 'My Drive'}/${folder('/')}</b> on Google Drive, in a folder per client${shared ? ', where everyone with access to the shared drive can see it' : ''}. Google Drive for desktop isn't needed.`
+    : (shared
+      ? `Every saved invoice is copied into <b>Shared drives${SEP}${esc(shared)}${SEP}${folder(SEP)}</b>, in a folder per client. Google Drive for desktop uploads it, and everyone with access to the shared drive can see it on drive.google.com.`
+      : BACKUP_HELP[provider](folder(SEP)))
+      + (provider === 'google' && gd.configured && !online ? " No Google Drive for desktop? Connect your Google Drive and Invaro uploads invoices itself." : '');
   const s = $('#drive-status');
-  if (backupState.ready) {
+  if (online) {
     s.className = 'drive-status on';
-    s.textContent = `Backing up every saved invoice to ${backupState.dir}` + (backupState.auto ? ' (synced by Google Drive).' : '.');
+    s.textContent = `Connected to Google Drive${gd.email ? ` as ${gd.email}` : ''}. Backing up every saved invoice to ${backupState.dir}.`;
+  } else if (backupState.ready) {
+    s.className = 'drive-status on';
+    s.textContent = `Backing up every saved invoice to ${backupState.dir}` + (backupState.auto ? ` (synced by ${shared ? 'Google Drive' : backupState.name}).` : '.');
+  } else if (shared && backupState.myDrive) {
+    s.className = 'drive-status err';
+    s.textContent = `Can't find the "${shared}" shared drive. Check you still have access to it, or pick another location. Invoices will be backed up once it's back.`;
   } else if (backupState.dir) {
     s.className = 'drive-status err';
-    s.textContent = `Can't reach ${backupState.dir}. Is Google Drive running? Invoices will be backed up once it's back.`;
+    s.textContent = `Can't reach ${backupState.dir}. ${provider === 'other' ? 'Is the drive connected?' : `Is ${backupState.name} running?`} Invoices will be backed up once it's back.`;
   } else {
     s.className = 'drive-status err';
-    s.textContent = "Google Drive for desktop isn't installed or signed in, so invoices are not being backed up.";
+    s.textContent = provider === 'other' ? 'Choose a folder, and invoices will be backed up there.'
+      : provider === 'google' && gd.configured ? 'Invoices are not being backed up yet. Connect your Google Drive, or install Google Drive for desktop.'
+      : `${backupState.name}${provider === 'google' ? ' for desktop' : ''} isn't installed or signed in, so invoices are not being backed up.`;
   }
-  $('#drive-install').hidden = !!backupState.myDrive || !!settings.backupDir;
+  const install = INSTALL[provider];
+  $('#drive-install').hidden = !install || online || !!(provider === 'google' ? backupState.myDrive : backupState.root);
+  if (install) $('#drive-install').textContent = install[0];
+  $('#drive-install').classList.toggle('primary', !(provider === 'google' && gd.configured));
+  const connect = $('#gd-connect');
+  connect.hidden = provider !== 'google' || !gd.configured || gd.connected;
+  connect.classList.toggle('primary', !backupState.myDrive);
+  connect.textContent = gd.connecting ? 'Waiting for Google… (click to cancel)' : (backupState.myDrive ? 'Connect Google Drive online instead' : 'Connect Google Drive');
+  $('#gd-disconnect').hidden = !online;
   $('#drive-open').hidden = !backupState.ready;
-  $('#drive-auto').hidden = !settings.backupDir;
+  $('#drive-change').hidden = provider !== 'other';
+  $('#drive-change').textContent = settings.backupDir ? 'Choose a different folder…' : 'Choose folder…';
   const missing = invoices.filter(h => !h.backup).length;
   $('#drive-retry').hidden = !backupState.ready || !missing;
   $('#drive-retry').textContent = `Back up ${missing} missing invoice${missing === 1 ? '' : 's'}`;
 }
-$('#drive-install').onclick = () => store.openExternal('https://www.google.com/drive/download/');
-$('#drive-open').onclick = async () => { const r = await store.openBackupDir(settings.backupDir || ''); if (r && r.error) toast(r.error); };
-$('#drive-change').onclick = async () => {
-  const dir = await store.chooseBackupDir(settings.backupDir || '');
-  if (!dir) return;
-  settings.backupDir = dir; persist('settings');
+$('#drive-provider').onchange = async e => {
+  settings.backupProvider = e.target.value; persist('settings');
+  await refreshBackupStatus();
+  if (e.target.value === 'other' && !settings.backupDir) return $('#drive-change').click();
+  retryPendingBackups();
+};
+// The Google Drive location list: My Drive plus every shared drive Google Drive for desktop shows.
+// A chosen shared drive stays in the list even when it can't be found, so the choice isn't lost.
+async function refreshSharedDrives() {
+  const sel = $('#drive-location');
+  const show = backupProvider() === 'google' && !!store.backupSharedDrives;
+  sel.parentElement.hidden = !show;
+  if (!show) return;
+  const names = (await store.backupSharedDrives()).map(d => d.name);
+  const cur = settings.backupSharedDrive || '';
+  if (cur && !names.includes(cur)) names.push(cur);
+  sel.innerHTML = '<option value="">My Drive</option>' + (names.length
+    ? `<optgroup label="Shared drives">${names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}</optgroup>` : '');
+  sel.value = cur;
+}
+$('#drive-location').onchange = async e => {
+  settings.backupSharedDrive = e.target.value; persist('settings');
   await refreshBackupStatus(); retryPendingBackups();
 };
-$('#drive-auto').onclick = async () => {
-  settings.backupDir = ''; persist('settings');
+async function setBackupFolder(value) {
+  const f = cleanFolder(value);
+  $('#drive-folder').value = f;
+  if (f === (settings.backupFolder || '')) return;
+  settings.backupFolder = f; persist('settings');
+  await refreshBackupStatus(); retryPendingBackups();
+}
+$('#drive-folder').onchange = e => setBackupFolder(e.target.value);
+$('#drive-folder').onkeydown = e => { if (e.key === 'Enter') e.target.blur(); };
+// Folder picker: browses the folders inside the chosen drive (My Drive, a shared drive or OneDrive),
+// online through the Drive API when connected, otherwise in the synced folder on this computer.
+let pickerPath = [];
+async function showPickerFolder(parts) {
+  const list = $('#folder-dlg-list');
+  const top = backupState && backupState.online ? (backupShared() ? `Shared drives/${backupShared()}` : 'My Drive')
+    : backupShared() ? `Shared drives/${backupShared()}` : backupWhere();
+  list.innerHTML = '<p class="muted">Loading…</p>';
+  $('#folder-dlg-path').textContent = [top, ...parts].join(' / ');
+  $('#folder-dlg-up').disabled = !parts.length;
+  $('#folder-dlg-use').disabled = !parts.length;
+  pickerPath = parts;
+  const r = await store.backupFolders(backupSel(), parts);
+  if (pickerPath !== parts) return; // the user moved on while this loaded
+  if (r && r.error) { list.innerHTML = `<p class="muted">${esc(r.error)}</p>`; return; }
+  list.innerHTML = r.length ? r.map(n => `<button type="button" data-f="${esc(n)}">📁 ${esc(n)}</button>`).join('')
+    : `<p class="muted">No folders here.${parts.length ? ' Use this folder, or go up.' : ''} To make a new one, type its name in the Folder box instead.</p>`;
+  list.querySelectorAll('button').forEach(b => { b.onclick = () => showPickerFolder([...parts, b.dataset.f]); });
+}
+$('#drive-browse').onclick = () => {
+  $('#folder-dlg').showModal();
+  const cur = cleanFolder(settings.backupFolder);
+  showPickerFolder(cur ? cur.split('/') : []);
+};
+$('#folder-dlg-up').onclick = () => showPickerFolder(pickerPath.slice(0, -1));
+$('#folder-dlg-cancel').onclick = () => $('#folder-dlg').close();
+$('#folder-dlg-use').onclick = () => { $('#folder-dlg').close(); setBackupFolder(pickerPath.join('/')); };
+$('#gd-connect').onclick = async () => {
+  const gd = await store.gdriveStatus();
+  if (gd.connecting) { await store.gdriveCancel(); return refreshBackupStatus(); }
+  const done = store.gdriveConnect();
+  setTimeout(refreshBackupStatus, 300); // show "Waiting for Google…"
+  const r = await done;
+  await refreshBackupStatus();
+  if (r && r.error) { if (!/cancelled/i.test(r.error)) toast(r.error); return; }
+  toast(`Google Drive connected${r.email ? ` (${r.email})` : ''}. Invoices will be uploaded there.`);
+  retryPendingBackups();
+};
+$('#gd-disconnect').onclick = async () => {
+  if (!confirm('Disconnect Google Drive? Invoices already uploaded stay in your Drive. Invaro stops uploading new ones.')) return;
+  await store.gdriveDisconnect();
+  await refreshBackupStatus();
+  toast('Google Drive disconnected.');
+};
+$('#drive-install').onclick = () => { const i = INSTALL[backupProvider()]; if (i) store.openExternal(i[1]); };
+$('#drive-open').onclick = async () => { const r = await store.openBackupDir(backupSel()); if (r && r.error) toast(r.error); };
+$('#drive-change').onclick = async () => {
+  const dir = await store.chooseBackupDir(backupSel());
+  if (!dir) return;
+  settings.backupDir = dir; settings.backupProvider = 'other'; persist('settings');
   await refreshBackupStatus(); retryPendingBackups();
 };
 $('#drive-retry').onclick = async () => {
@@ -797,7 +924,7 @@ $('#overdue-bars').onclick = e => {
 function renderHistory() {
   $('#hist-empty').style.display = invoices.length ? 'none' : '';
   const driveCell = h => h.backup
-    ? `<button class="link ok" data-act="drive" data-id="${h.id}" title="Backed up to ${esc(h.backup)}. Click to show it.">✓ Drive</button>`
+    ? `<button class="link ok" data-act="drive" data-id="${h.id}" title="Backed up to ${esc(h.backup)}. Click to show it.">✓ Backed up</button>`
     : h.backupError !== undefined
       ? `<button class="link warn" data-act="backup" data-id="${h.id}" title="${esc(h.backupError)}. Click to retry.">⚠ Retry</button>`
       : '<span class="muted">–</span>';
@@ -824,12 +951,12 @@ $('#hist').onclick = async e => {
   const h = invoices.find(x => x.id === id); if (!h) return;
   if (act === 'pdf') { if (await savePdf(h)) { persist('invoices'); renderHistory(); } }
   else if (act === 'open') { const r = await store.open(h.file); if (r) toast(`Can't open it: ${r}`); }
-  else if (act === 'drive') store.showInFolder(h.backup);
+  else if (act === 'drive') /^https:\/\//.test(h.backup) ? store.openExternal(h.backup) : store.showInFolder(h.backup);
   else if (act === 'backup') {
     e.target.disabled = true; e.target.textContent = 'Backing up…';
     const ok = await backupPdf(h);
     persist('invoices'); renderHistory();
-    toast(ok ? `${h.inv.number} backed up to Google Drive` : `Backup failed: ${h.backupError}`);
+    toast(ok ? `${h.inv.number} backed up to ${backupWhere()}` : `Backup failed: ${h.backupError}`);
   } else if (act === 'paid' || act === 'unpaid') {
     setPaid(id, act === 'paid');
   } else if (act === 'convert') {

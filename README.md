@@ -40,7 +40,7 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 - **Quotes:** switch **New invoice** to **Quote** for a quote with its own numbering and a "valid until" date, then turn it into an invoice with one click.
 - **Reports:** see what you've invoiced, been paid, are owed and charged in VAT for a tax year (March to February) or calendar year, by client and by month, and export it to a spreadsheet.
 - **Sign in with Google (optional):** back up your clients, settings, logos and invoice history to your own private account, and use them on your other computers.
-- **Backups:** if you use Google Drive for desktop, every saved invoice is also copied to your Google Drive.
+- **Backups:** every saved invoice is also copied to Google Drive (My Drive or a shared drive), OneDrive, or any other folder you choose, into a folder of your choice with a folder per client (My details → Invoice backup).
 
 ![The Notifications tab, with a reminder day for each client](docs/screenshot-notifications.png)
 
@@ -62,7 +62,7 @@ Releases also link a **VirusTotal** scan of the Windows installer and the Mac di
 - **Your account (only if you sign in):** your clients, settings, logos and invoice history are synced to your own account, which only you can read. Your PDFs aren't uploaded. **My details → Account & sync → Delete my cloud data** removes it. See the [privacy policy](https://bryceh1996.github.io/invoicer/privacy.html).
 - **Reminders:** while at least one client has a reminder or an invoice is unpaid, it schedules a quick check once a day at 9am. On Windows that's a Task Scheduler task called "Invaro reminders"; on a Mac it's a launch agent called `local.invoicer.reminders`, which also checks when you log in. Turning off your last reminder removes it, and on Windows so does uninstalling.
 - **Updates:** it checks this repository's releases when it starts and every 30 minutes. It only downloads and installs an update when you click **Restart & update**.
-- **Backups:** if Google Drive for desktop is installed, it copies saved invoices into your `My Drive` folder, and Google Drive uploads them as usual. Invaro never signs in to Google itself.
+- **Backups:** saved invoices are copied into `Invaro Backups` (or a folder you pick) inside your `My Drive` folder (Google Drive for desktop) or your `OneDrive` folder, or into any folder you pick, and the sync app uploads them as usual. Without Google Drive for desktop you can instead **Connect Google Drive**: Invaro then uploads each saved PDF to that folder in My Drive or a shared drive you pick, and nothing else. **Disconnect Google Drive** removes its access.
 
 ## Your data
 

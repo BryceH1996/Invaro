@@ -104,6 +104,14 @@ function createWindow(show) {
   });
   win.loadFile(path.join(__dirname, 'app', 'index.html'));
   win.on('closed', () => { win = null; });
+  win.on('focus', () => cloud && cloud.onFocus());
+  // The window only ever shows the app itself: no navigating away, no new windows.
+  // (Reloading the app's own page is allowed: it's how the window shows freshly synced data.)
+  win.webContents.on('will-navigate', (e, url) => {
+    const page = u => String(u).split('#')[0];
+    if (page(url) !== page(win.webContents.getURL())) e.preventDefault();
+  });
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   return win;
 }
 function showWindow() {
@@ -124,11 +132,32 @@ ipcMain.handle('data:save', (_e, name, value) => {
   if (!FILES[name]) throw new Error('Unknown data file: ' + name);
   writeJson(name, value);
   if (name === 'clients' || name === 'invoices') remindersChanged();
+  if (cloud) cloud.markDirty(name);
   return true;
 });
 
 // Errors are returned as { error } so the UI gets a clean message instead of an IPC stack.
 const safe = fn => async (...args) => { try { return await fn(...args); } catch (e) { return { error: e.message || String(e) }; } };
+
+// ---------- account and cloud sync (cloud.js) ----------
+let cloud = null;
+function startCloud() {
+  const { createCloud } = require('./cloud');
+  cloud = createCloud({
+    config: require('./package.json').cloud || {},
+    dataDir: () => DATA_DIR,
+    readLocal: name => JSON.parse(fs.readFileSync(file(name), 'utf8')),
+    writeLocal: (name, value) => { writeJson(name, value); if (name !== 'settings') remindersChanged(); },
+    onRemoteChange: () => win && win.webContents.send('data:changed'),
+    onStatus: s => win && win.webContents.send('cloud:status', s),
+    parentWindow: () => win,
+  });
+}
+ipcMain.handle('cloud:status', () => cloud ? cloud.status() : { configured: false });
+ipcMain.handle('cloud:signIn', safe(() => cloud.signIn()));
+ipcMain.handle('cloud:signOut', safe(() => cloud.signOut()));
+ipcMain.handle('cloud:sync', safe(() => cloud.sync('button')));
+ipcMain.handle('cloud:delete', safe(() => cloud.deleteCloudData()));
 // A client's company name as a Windows-safe folder name.
 const folderName = s => String(s || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '').replace(/[. ]+$/, '').trim() || 'Unnamed client';
 
@@ -244,8 +273,10 @@ ipcMain.handle('backup:open', safe((_e, chosen) => {
   if (!t.dir || !isDir(t.dir)) throw new Error('The backup folder will be created when you save your first invoice.');
   return shell.openPath(t.dir);
 }));
+// Only these pages can be opened in the browser from the app.
+const EXTERNAL_OK = [/^https:\/\/www\.google\.com\/drive\/download\/$/, /^https:\/\/bryceh1996\.github\.io\/invoicer\/[a-z.-]*$/];
 ipcMain.handle('shell:external', (_e, url) => {
-  if (url === 'https://www.google.com/drive/download/') return shell.openExternal(url);
+  if (EXTERNAL_OK.some(re => re.test(String(url)))) return shell.openExternal(url);
 });
 
 // Switch data folder. If the chosen folder already has Invoicer data, use it;
@@ -278,6 +309,8 @@ ipcMain.handle('data:chooseDir', async () => {
   writeConfig({ ...readConfig(), dataDir: target });
   DATA_DIR = target;
   syncReminderTask(); // the other folder's clients may have different reminders
+  // Signed in: treat the new folder like a first sign-in (asks which copy to keep if both have data).
+  if (cloud && cloud.status().signedIn) await cloud.firstSync().catch(() => {});
   return target;
 });
 
@@ -423,7 +456,8 @@ const readQuiet = name => { try { return JSON.parse(fs.readFileSync(file(name), 
 // INVOICER_NOW lets tests pretend it's another date/time.
 const now = () => process.env.INVOICER_NOW ? new Date(process.env.INVOICER_NOW) : new Date();
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const remindersOn = () => !!DATA_DIR && (readQuiet('clients') || []).some(c => c.reminderDay);
+// The daily check is needed while any client has a reminder, or any invoice is unpaid (for overdue reminders).
+const remindersOn = () => !!DATA_DIR && ((readQuiet('clients') || []).some(c => c.reminderDay) || (readQuiet('invoices') || []).some(h => h.tracked && !h.paidAt && !(h.inv && h.inv.type === 'quote')));
 
 function reminderDate(day, y, m) {
   const last = new Date(y, m + 1, 0);
@@ -447,7 +481,7 @@ function reminderOverview(at = now()) {
     if (d > today) return { ...base, status: 'upcoming', date: ymd(d), next: ymd(d) };
     if (skipped[c.id] === ymd(d)) return { ...base, status: 'skipped', date: ymd(d), next: following };
     const since = new Date(d); since.setDate(since.getDate() - 7);
-    const inv = invoices.find(h => h.c && h.c.id === c.id && new Date(h.savedAt) >= since);
+    const inv = invoices.find(h => h.c && h.c.id === c.id && !(h.inv && h.inv.type === 'quote') && new Date(h.savedAt) >= since);
     if (inv) return { ...base, status: 'invoiced', date: ymd(d), next: following, invoice: inv.inv && inv.inv.number };
     return { ...base, status: 'due', date: ymd(d), next: following };
   });
@@ -465,29 +499,44 @@ function openReminder(id) {
 }
 
 const shown = new Set(); // keep notifications referenced so their click handlers still work
+// r: { title, body, open } where open is a client id (start an invoice) or 'history'.
 function notify(r) {
   if (process.env.INVOICER_NOTIFY_LOG) fs.appendFileSync(process.env.INVOICER_NOTIFY_LOG, JSON.stringify(r) + '\n');
   if (!Notification.isSupported()) return;
   // timeoutType 'never' keeps it on screen until you click or dismiss it.
-  const n = new Notification({ title: `Time to invoice ${r.company}`, body: 'Click to start the invoice.', icon: ICON, timeoutType: 'never' });
+  const n = new Notification({ title: r.title, body: r.body, icon: ICON, timeoutType: 'never' });
   const done = () => { shown.delete(n); quitIfIdle(); };
-  n.on('click', () => { openReminder(r.id); done(); });
+  n.on('click', () => { openReminder(r.open); done(); });
   n.on('close', done);
   shown.add(n);
   n.show();
 }
-// Shows each due reminder at most once a day, from 9am. Returns how many were shown.
+// Invoices saved since paid tracking began (1.12.0) that are unpaid and past their due date.
+const isOpenInvoice = h => h.tracked && !h.paidAt && !(h.inv && h.inv.type === 'quote');
+function overdueInvoices(at = now()) {
+  const today = ymd(at);
+  return (readQuiet('invoices') || []).filter(h => isOpenInvoice(h) && h.inv.due && h.inv.due < today);
+}
+const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
+// From 9am: each due invoice reminder at most once a day, and each overdue invoice on the first
+// day it's overdue and then once a week until it's marked paid. Returns how many were shown.
 function checkReminders() {
   const at = now();
   const due = dueReminders(at);
   if (win) win.webContents.send('reminders', due);
   if (at.getHours() < 9) return 0;
-  const state = readReminderState(), notified = state.notified || {};
+  const state = readReminderState(), notified = state.notified || {}, overdueSeen = state.overdueNotified || {};
   const fresh = due.filter(r => notified[r.id] !== ymd(at));
-  if (!fresh.length) return 0;
-  fresh.forEach(r => { notified[r.id] = ymd(at); notify(r); });
-  writeReminderState({ ...readReminderState(), notified });
-  return fresh.length;
+  fresh.forEach(r => { notified[r.id] = ymd(at); notify({ title: `Time to invoice ${r.company}`, body: 'Click to start the invoice.', open: r.id }); });
+  const late = overdueInvoices(at).filter(h => !overdueSeen[h.id] || daysBetween(overdueSeen[h.id], ymd(at)) >= 7);
+  late.forEach(h => {
+    overdueSeen[h.id] = ymd(at);
+    const amount = `${h.c.currency || ''} ${(Number(h.total) || 0).toFixed(2)}`.trim();
+    notify({ title: `${h.inv.number} is overdue`, body: `${h.c.company || 'A client'} owes ${amount}, due ${h.inv.due}. Click to open History.`, open: 'history' });
+  });
+  if (!fresh.length && !late.length) return 0;
+  writeReminderState({ ...readReminderState(), notified, overdueNotified: overdueSeen });
+  return fresh.length + late.length;
 }
 // A check-only run quits once there's no window and no notification waiting to be clicked.
 function quitIfIdle() { if (CHECK_ONLY && !win && !shown.size) app.quit(); }
@@ -650,9 +699,10 @@ app.whenReady().then(async () => {
     setTimeout(() => app.quit(), 12 * 60 * 60 * 1000);
     return;
   }
+  startCloud();
   createWindow(true);
   syncReminderTask(true);
-  win.webContents.once('did-finish-load', () => setTimeout(checkReminders, 3000));
+  win.webContents.once('did-finish-load', () => { setTimeout(checkReminders, 3000); setTimeout(() => cloud.sync('start'), 2000); });
   setInterval(checkReminders, 15 * 60 * 1000);
   powerMonitor.on('resume', checkReminders);
   powerMonitor.on('unlock-screen', checkReminders);

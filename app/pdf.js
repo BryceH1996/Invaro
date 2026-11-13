@@ -131,8 +131,17 @@ function drawLogo(doc, logo, x, y, maxW, maxH, align) {
   return h;
 }
 
-// opts: { me, c, inv, lines, pageSize, design, logo, taxLabel }
+// The words a template prints, for an invoice or a quote (inv.type === 'quote').
+const WORDS = {
+  invoice: { TITLE: 'INVOICE', Title: 'Invoice', no: 'Invoice No.', noLower: 'Invoice no.', hash: 'Invoice #', date: 'Invoice Date', due: 'Due Date', dueShort: 'Due', amountDue: 'AMOUNT DUE', totalDue: 'Total Due', terms: 'Payment Terms' },
+  quote: { TITLE: 'QUOTE', Title: 'Quote', no: 'Quote No.', noLower: 'Quote no.', hash: 'Quote #', date: 'Quote Date', due: 'Valid Until', dueShort: 'Valid until', amountDue: 'QUOTE TOTAL', totalDue: 'Quote Total', terms: 'Validity' },
+};
+const docWords = inv => WORDS[inv && inv.type === 'quote' ? 'quote' : 'invoice'];
+
+// opts: { me, c, inv, lines, pageSize, design, logo, taxLabel, bank, bankLogo }
 function buildPdf(opts) {
+  // Quotes aren't payable yet, so they leave out the banking details.
+  if (opts.inv && opts.inv.type === 'quote') opts = { ...opts, bank: null, bankLogo: null };
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'pt', format: opts.pageSize || 'letter' });
   const d = resolveDesign(opts.design);
@@ -163,7 +172,7 @@ function drawClassic({ doc, W, me, c, inv, lines, logo, bank, bankLogo, accent, 
   doc.setFillColor(...LIGHT); doc.rect(L, 87, M - L, 161, 'F');
   doc.setFillColor(...DARK);  doc.rect(M, 87, R - M, 161, 'F');
   doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.setTextColor(ON);
-  doc.text('INVOICE', R - 6, 121, { align: 'right' });
+  doc.text(docWords(inv).TITLE, R - 6, 121, { align: 'right' });
 
   // logo top-left, then my details bottom-aligned in the light block
   const top = 95 + (drawLogo(doc, logo, L + 6, 95, 150, 40) ? 40 + 10 : 0);
@@ -193,9 +202,9 @@ function drawClassic({ doc, W, me, c, inv, lines, logo, bank, bankLogo, accent, 
   // invoice meta
   doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(ON);
   const lx = M + 6, vx = M + 82;
-  doc.text('Invoice No.:', lx, 164);  doc.text(inv.number || '', vx, 164);
-  doc.text('Invoice Date:', lx, 183); drawDate(doc, inv.date, vx, 183, 11);
-  doc.text('Due Date:', lx, 202);     drawDate(doc, inv.due, vx, 202, 11);
+  doc.text(docWords(inv).no + ':', lx, 164);  doc.text(inv.number || '', vx, 164);
+  doc.text(docWords(inv).date + ':', lx, 183); drawDate(doc, inv.date, vx, 183, 11);
+  doc.text(docWords(inv).due + ':', lx, 202);     drawDate(doc, inv.due, vx, 202, 11);
 
   // bill to
   doc.setTextColor(0); doc.setFontSize(11);
@@ -326,7 +335,7 @@ function drawWave({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, 
   doc.lines([[W * 0.12, -40, W * 0.38, -58, W * 0.66, -60], [-W * 0.06, 0], [-W * 0.26, 4, -W * 0.48, 22, -W * 0.6, 48]], 0, 70, [1, 1], 'F', true);
 
   doc.setFont('helvetica', 'bold'); doc.setTextColor(ON);
-  doc.setFontSize(36); doc.text('INVOICE', L, 104);
+  doc.setFontSize(36); doc.text(docWords(inv).TITLE, L, 104);
   doc.setFontSize(13); doc.text(`NO: ${inv.number || ''}`, R, 104, { align: 'right' });
 
   // logo in the white space on the right, under the curve
@@ -346,7 +355,7 @@ function drawWave({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, 
 
   doc.setFontSize(11); doc.setTextColor(70);
   doc.text(`Date: ${pdfDate(inv.date)}`, L, y);
-  if (inv.due) doc.text(`Due: ${pdfDate(inv.due)}`, L + 190, y);
+  if (inv.due) doc.text(`${docWords(inv).dueShort}: ${pdfDate(inv.due)}`, L + 190, y);
   y += 22;
 
   // table
@@ -402,7 +411,7 @@ function drawMinimal({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accen
   const band = tint(accent, 0.9);
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(40); doc.setTextColor(0);
-  doc.text('Invoice', L, 92);
+  doc.text(docWords(inv).Title, L, 92);
   drawLogo(doc, logo, R - 170, 52, 170, 56, 'right');
 
   // three columns: from, to, invoice details
@@ -419,7 +428,7 @@ function drawMinimal({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accen
   const yb = block((c.company || '').toUpperCase(), toLines(c), L + colW);
   const mx = L + colW * 2 + 10;
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
-  [['Invoice #:', inv.number || ''], ['Issue Date:', pdfDate(inv.date)], ['Due Date:', pdfDate(inv.due)]].forEach(([k, v], i) => {
+  [[docWords(inv).hash + ':', inv.number || ''], ['Issue Date:', pdfDate(inv.date)], [docWords(inv).due + ':', pdfDate(inv.due)]].forEach(([k, v], i) => {
     doc.setTextColor(140); doc.text(k, mx, y0 + i * 16);
     doc.setTextColor(40); doc.text(v, R, y0 + i * 16, { align: 'right' });
   });
@@ -456,15 +465,15 @@ function drawMinimal({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accen
   doc.setDrawColor(180); doc.line(tx, ty, R, ty);
   ty += 18;
   doc.setFont('helvetica', 'bold'); doc.setTextColor(...shade(accent, 0.35));
-  doc.text('Total Due', tx, ty); doc.text(money(totals.total, cur), R - 7, ty, { align: 'right' });
+  doc.text(docWords(inv).totalDue, tx, ty); doc.text(money(totals.total, cur), R - 7, ty, { align: 'right' });
 
   // payment terms and notes on the left
   let ly = y + 70;
   doc.setTextColor(20); doc.setFontSize(10.5);
-  doc.text('Payment Terms:', L, ly);
+  doc.text(docWords(inv).terms + ':', L, ly);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(70);
   const days = Number(c.dueDays);
-  ly = textBlock(doc, [inv.due ? `Payment due by ${pdfDate(inv.due)}${days ? ` (${days} days)` : ''}.` : 'Payment due on receipt.'], L, ly + 16, 13, (R - L) * 0.5);
+  ly = textBlock(doc, [inv.type === 'quote' ? (inv.due ? `This quote is valid until ${pdfDate(inv.due)}.` : 'Prices are valid for 30 days.') : inv.due ? `Payment due by ${pdfDate(inv.due)}${days ? ` (${days} days)` : ''}.` : 'Payment due on receipt.'], L, ly + 16, 13, (R - L) * 0.5);
   // banking details across the page, under the totals
   const by = Math.max(ly + 12, ty + 26);
   const bh = drawBankBox(doc, { bank, bankLogo, inv, x: L, y: by, w: R - L, accent });
@@ -513,7 +522,7 @@ function drawBold({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, 
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(190);
   doc.text([me.email, me.phone].filter(Boolean).join('   ·   '), L, hy + 14);
   doc.setFont('helvetica', 'bold'); doc.setFontSize(32); doc.setTextColor(255);
-  doc.text('INVOICE', R, 66, { align: 'right' });
+  doc.text(docWords(inv).TITLE, R, 66, { align: 'right' });
   doc.setFontSize(12); doc.setTextColor(...accent);
   doc.text(`# ${inv.number || ''}`, R, 88, { align: 'right' });
 
@@ -521,10 +530,10 @@ function drawBold({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, 
   const bw = 176, bx = R - bw, by = 148;
   doc.setFillColor(...accent); doc.rect(bx, by, bw, 76, 'F');
   doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(ON);
-  doc.text('AMOUNT DUE', bx + 14, by + 20);
+  doc.text(docWords(inv).amountDue, bx + 14, by + 20);
   doc.setFontSize(21); doc.text(money(totals.total, cur), bx + 14, by + 46);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-  if (inv.due) doc.text(`Due ${pdfDate(inv.due)}`, bx + 14, by + 64);
+  if (inv.due) doc.text(`${docWords(inv).dueShort} ${pdfDate(inv.due)}`, bx + 14, by + 64);
   doc.setTextColor(110); doc.text(`Issued ${pdfDate(inv.date)}`, bx, by + 94);
 
   // billed to and from
@@ -596,7 +605,7 @@ function drawElegant({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accen
   doc.setLineWidth(0.35); doc.line(L, y + 3, R, y + 3);
 
   doc.setFont('times', 'italic'); doc.setFontSize(30); doc.setTextColor(...accent);
-  doc.text('Invoice', MID, y + 42, { align: 'center' });
+  doc.text(docWords(inv).Title, MID, y + 42, { align: 'center' });
   y += 72;
 
   // billed to (left) and invoice details (right)
@@ -606,7 +615,7 @@ function drawElegant({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accen
   doc.setFont('times', 'normal'); doc.setFontSize(10.5); doc.setTextColor(80);
   yl = textBlock(doc, toLines(c), L, yl, 13.5, 240);
   let yr = y;
-  for (const [k, v] of [['Invoice no.', inv.number || ''], ['Date', pdfDate(inv.date)], ['Due', pdfDate(inv.due)]]) {
+  for (const [k, v] of [[docWords(inv).noLower, inv.number || ''], ['Date', pdfDate(inv.date)], [docWords(inv).dueShort, pdfDate(inv.due)]]) {
     doc.setFont('times', 'italic'); doc.setFontSize(11); doc.setTextColor(...accent); doc.text(k, R - 170, yr);
     doc.setFont('times', 'normal'); doc.setTextColor(...INK); doc.text(v, R, yr, { align: 'right' });
     yr += 17;
@@ -660,7 +669,7 @@ function drawSidebar({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accen
   let sy = 36;
   const th = logoTile(doc, logo, sx, sy, sw - 16, 52);
   if (th) sy += th + 26; else sy += 8;
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(24); doc.setTextColor(...ON); doc.text('INVOICE', sx, sy + 16);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(24); doc.setTextColor(...ON); doc.text(docWords(inv).TITLE, sx, sy + 16);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(11.5); doc.text(inv.number || '', sx, sy + 34);
   sy += 64;
   const section = title => { doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(...SUB); doc.text(title, sx, sy); sy += 14; };
@@ -678,7 +687,7 @@ function drawSidebar({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accen
 
   section('DATES');
   pair('Issued', pdfDate(inv.date));
-  if (inv.due) pair('Due', pdfDate(inv.due));
+  if (inv.due) pair(docWords(inv).dueShort, pdfDate(inv.due));
   sy += 10;
 
   const rows = bankRows(bank, inv);

@@ -34,6 +34,10 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 - **Numbering:** invoice numbers carry on from the last one you saved.
 - **History:** every saved invoice, ready to open, save again, or copy into a new one.
 - **Reminders:** pick a day each month for each client on the **Notifications** tab. Your computer then reminds you once a day until you've invoiced them, even when Invoicer is closed.
+- **Paid or not:** mark invoices paid in **History**. Unpaid invoices past their due date show as overdue, and you're reminded the day after, then weekly.
+- **Quotes:** switch **New invoice** to **Quote** for a quote with its own numbering and a "valid until" date, then turn it into an invoice with one click.
+- **Reports:** see what you've invoiced, been paid, are owed and charged in VAT for a tax year (March to February) or calendar year, by client and by month, and export it to a spreadsheet.
+- **Sign in with Google (optional):** back up your clients, settings, logos and invoice history to your own private account, and use them on your other computers.
 - **Backups:** if you use Google Drive for desktop, every saved invoice is also copied to your Google Drive.
 
 ![The Notifications tab, with a reminder day for each client](docs/screenshot-notifications.png)
@@ -53,7 +57,8 @@ Releases also link a **VirusTotal** scan of the Windows installer and the Mac di
 
 **What Invoicer does on your computer:**
 - **Your data:** it saves your data as plain files on your computer (see [Your data](#your-data)). There are no accounts, tracking or analytics, and Invoicer never uploads anything itself.
-- **Reminders:** while at least one client has a reminder, it schedules a quick check once a day at 9am. On Windows that's a Task Scheduler task called "Invoicer reminders"; on a Mac it's a launch agent called `local.invoicer.reminders`, which also checks when you log in. Turning off your last reminder removes it, and on Windows so does uninstalling.
+- **Your account (only if you sign in):** your clients, settings, logos and invoice history are synced to your own account, which only you can read. Your PDFs aren't uploaded. **My details → Account & sync → Delete my cloud data** removes it. See the [privacy policy](https://bryceh1996.github.io/invoicer/privacy.html).
+- **Reminders:** while at least one client has a reminder or an invoice is unpaid, it schedules a quick check once a day at 9am. On Windows that's a Task Scheduler task called "Invoicer reminders"; on a Mac it's a launch agent called `local.invoicer.reminders`, which also checks when you log in. Turning off your last reminder removes it, and on Windows so does uninstalling.
 - **Updates:** it checks this repository's releases when it starts and every 30 minutes. It only downloads and installs an update when you click **Restart & update**.
 - **Backups:** if Google Drive for desktop is installed, it copies saved invoices into your `My Drive` folder, and Google Drive uploads them as usual. Invoicer never signs in to Google itself.
 
@@ -70,7 +75,7 @@ Everything is in the `Invoicer` folder in your Documents (**My details → Data*
 | `bank-logo.png` (or `.jpg`, …) | Your bank's logo, if you've added one |
 | `<Client>/*.pdf` | Your invoices, one folder per client |
 
-Invoicer's app folder also remembers which data folder you use and when each reminder last showed. It's `%APPDATA%\Invoicer` on Windows and `~/Library/Application Support/Invoicer` on a Mac. To back everything up, or to use the same data on another computer, move the data folder into OneDrive, iCloud Drive or similar.
+Invoicer's app folder also remembers which data folder you use, when each reminder last showed, and (if you sign in) your sign-in, encrypted by the operating system. It's `%APPDATA%\Invoicer` on Windows and `~/Library/Application Support/Invoicer` on a Mac. To back everything up, or to use the same data on another computer, move the data folder into OneDrive, iCloud Drive or similar.
 
 ---
 
@@ -99,10 +104,37 @@ It refuses to reuse a version number. Use `--no-build` to reuse the installer in
 | `main.js` | Main process: window, storage, saving, backups, reminders, updates |
 | `preload.js` | Bridge between the UI and the main process |
 | `app/` | UI (`index.html`, `renderer.js`, `style.css`) and the PDF layout (`pdf.js`) |
+| `cloud.js` | Sign-in with Google (via Supabase) and cloud sync |
+| `docs/` | The website (GitHub Pages): homepage and privacy policy, plus README screenshots |
 | `scripts/release.js` | The release script |
 | `.github/workflows/mac.yml`, `scripts/mac-smoke-test.js` | The Mac build and its smoke test |
 | `build/` | App icon; `installer.nsh` removes the reminder task on uninstall |
 | `docs/` | README screenshots (invented sample data) |
 | `prototype/invoicer.html` | The original single-file browser version |
+
+### Cloud sync (Supabase)
+
+`package.json` → `cloud` holds the Supabase project URL and its **publishable** key. That key is meant to be public; row level security keeps each user's data private. The database needs:
+
+```sql
+create table public.documents (
+  user_id    uuid not null default auth.uid() references auth.users on delete cascade,
+  name       text not null check (name in ('clients', 'settings', 'invoices')),
+  data       jsonb not null,
+  updated_at timestamptz not null default now(),
+  primary key (user_id, name)
+);
+alter table public.documents enable row level security;
+create policy "Users manage their own documents" on public.documents
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Lets "Delete my cloud data" remove the whole account, not just its rows.
+create or replace function public.delete_own_account() returns void
+  language sql security definer set search_path = '' as $$ delete from auth.users where id = auth.uid(); $$;
+revoke all on function public.delete_own_account() from public, anon;
+grant execute on function public.delete_own_account() to authenticated;
+```
+
+Google is the sign-in provider, and `http://127.0.0.1:47823/auth/callback` must be in **Authentication → URL Configuration → Redirect URLs**.
 
 © All rights reserved. The code is public so you can see what the app does. It isn't licensed for reuse.

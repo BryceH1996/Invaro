@@ -6,9 +6,21 @@ header { display:flex; align-items:center; gap:24px; padding:10px 20px; backgrou
 header h1 { margin:0; font-size:18px; letter-spacing:.5px; }
 nav button { background:none; border:0; color:#fff; opacity:.75; font:inherit; padding:6px 10px; cursor:pointer; border-radius:6px; }
 nav button.active, nav button:hover { opacity:1; background:rgba(255,255,255,.18); }
+.cloud-pill { margin-left:auto; background:rgba(255,255,255,.18); border:0; color:#fff; font:inherit; font-size:12px; padding:4px 10px; border-radius:12px; cursor:pointer; }
+.cloud-pill.err { background:#fff; color:#a5420e; }
+.cloud-pill:not([hidden]) + .version { margin-left:12px; }
 header .version { margin-left:auto; font-size:12px; opacity:.75; }
 .update-bar { display:flex; align-items:center; gap:12px; padding:8px 20px; background:#fff4cc; border-bottom:1px solid #e8d48a; flex:none; }
 .update-bar[hidden] { display:none; }
+.title-row { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.seg { display:inline-flex; border:1px solid #d9d2bd; border-radius:8px; overflow:hidden; }
+.seg button { background:#fff; border:0; padding:6px 14px; font:inherit; font-size:13px; cursor:pointer; color:#555; }
+.seg button + button { border-left:1px solid #d9d2bd; }
+.seg button.on { background:#bf9000; color:#fff; }
+.status { font-size:12px; font-weight:600; padding:2px 8px; border-radius:10px; white-space:nowrap; }
+.status.paid { background:#e3f3e5; color:#2d7a3a; } .status.overdue { background:#fde8e1; color:#a5420e; }
+.status.unpaid { background:#fff4cc; color:#7a5c00; } .status.quote { background:#e8f1ff; color:#2b5591; }
+.status.untracked { color:#999; font-weight:normal; }
 .templates { display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:6px; }
 .templates button { background:#fff; border:2px solid #ddd8c8; border-radius:8px; padding:8px; cursor:pointer; font:inherit; text-align:center; }
 .templates button.on { border-color:#bf9000; box-shadow:0 0 0 2px rgba(191,144,0,.18); }
@@ -68,6 +80,11 @@ button.x:hover { color:#b3261e; }
 table { width:100%; border-collapse:collapse; font-size:13px; }
 th, td { text-align:left; padding:7px 6px; border-bottom:1px solid var(--line); }
 td.num, th.num { text-align:right; white-space:nowrap; }
+/* History: keep everything inside the panel; the action buttons wrap onto a second line if needed. */
+#hist td { vertical-align:top; }
+#hist td:last-child { white-space:normal; text-align:right; min-width:120px; }
+#hist .btn { padding:3px 8px; font-size:12px; margin:0 0 4px 2px; }
+#hist .status + .link { display:block; margin-top:3px; font-size:12px; }
 td .btn { padding:4px 10px; }
 .muted { color:var(--muted); font-size:12px; }
 .drive-status { margin:0 0 6px; padding:8px 10px; border-radius:6px; background:#f3f1ea; font-size:13px; }

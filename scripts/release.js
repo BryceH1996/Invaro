@@ -111,7 +111,7 @@ function publishPublic() {
     var tree = git('write-tree', { env });
   } finally { fs.rmSync(index, { force: true }); }
   let commit = parent;
-  if (tree !== git(`rev-parse ${parent}^{tree}`)) {
+  if (tree !== git(`rev-parse "${parent}^{tree}"`)) {
     const message = git('log -1 --format=%B main');
     commit = execSync(`git commit-tree ${tree} -p ${parent} -F -`, { cwd: root, input: message, encoding: 'utf8' }).trim();
     git(`push -q public ${commit}:refs/heads/main`, quiet);
@@ -271,6 +271,10 @@ async function virusTotal(bytes, sha256, name) {
     if (!releaseLocally()) return;
   } else if (!git(`tag --list ${tag}`)) {
     fail(`${tag} isn't tagged yet. Run a normal release first.`);
+  } else {
+    // Finish a release whose public publish failed (does nothing if it's already there).
+    try { publishPublic(); console.log(`✔ Public repo has main and ${tag}`); }
+    catch (e) { fail(`Couldn't publish to the public repo:\n${(e.stderr || e.message).toString().trim()}`); }
   }
   try { await publishGithubRelease(); }
   catch (e) {

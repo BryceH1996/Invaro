@@ -1,7 +1,7 @@
 {
   "name": "invoicer",
   "productName": "Invoicer",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "description": "Desktop invoicing app: saved clients, rates, and PDF invoices.",
   "author": "Invoicer",
   "main": "main.js",
@@ -10,6 +10,10 @@
   "privateFiles": [
     "SYNC.md"
   ],
+  "cloud": {
+    "url": "https://zjhewjjldmlaaqqzrmfs.supabase.co",
+    "key": "sb_publishable_UYu-4w3Nb9FZXcoWWRmowg_Fn_WOoFS"
+  },
   "scripts": {
     "start": "electron .",
     "icon": "node build/make-icon.js",
@@ -33,6 +37,7 @@
     },
     "files": [
       "main.js",
+      "cloud.js",
       "preload.js",
       "app/**/*",
       "build/icon.png",

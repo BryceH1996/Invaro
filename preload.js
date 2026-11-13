@@ -2,6 +2,13 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   platform: process.platform,
+  cloudStatus: () => ipcRenderer.invoke('cloud:status'),
+  cloudSignIn: () => ipcRenderer.invoke('cloud:signIn'),
+  cloudSignOut: () => ipcRenderer.invoke('cloud:signOut'),
+  cloudSync: () => ipcRenderer.invoke('cloud:sync'),
+  cloudDelete: () => ipcRenderer.invoke('cloud:delete'),
+  onCloudStatus: fn => ipcRenderer.on('cloud:status', (_e, s) => fn(s)),
+  onDataChanged: fn => ipcRenderer.on('data:changed', () => fn()),
   load: () => ipcRenderer.invoke('data:load'),
   save: (name, value) => ipcRenderer.invoke('data:save', name, value),
   saveInvoice: (bytes, client, name, altName, previous) => ipcRenderer.invoke('pdf:saveToClient', bytes, client, name, altName, previous),

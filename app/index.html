@@ -15,8 +15,10 @@
     <button data-go="clients">Clients</button>
     <button data-go="me">My details</button>
     <button data-go="notifications">Notifications</button>
+    <button data-go="reports">Reports</button>
     <button data-go="history">History</button>
   </nav>
+  <button class="cloud-pill" id="cloud-pill" hidden title="Account and sync"></button>
   <span class="version" id="app-version"></span>
 </header>
 <div class="update-bar" id="update-bar" hidden>
@@ -25,22 +27,28 @@
   <button class="x" id="update-later" title="Remind me later">×</button>
 </div>
 <div id="remind-bars"></div>
+<div id="overdue-bars"></div>
 <main>
   <div class="panel">
 
     <!-- INVOICE -->
     <section data-tab="invoice" class="show">
-      <h2>New invoice</h2>
+      <div class="title-row">
+        <h2 id="inv-heading">New invoice</h2>
+        <div class="seg" id="doc-type" role="tablist">
+          <button data-type="invoice" class="on">Invoice</button><button data-type="quote">Quote</button>
+        </div>
+      </div>
       <label>Client</label>
       <select id="inv-client"></select>
       <p class="muted rates" id="inv-rates"></p>
       <div class="row">
-        <div><label>Invoice no.</label><input id="inv-number"></div>
+        <div><label id="lbl-number">Invoice no.</label><input id="inv-number"></div>
         <div><label>Billing period (used in file name)</label><input id="inv-period" type="month"></div>
       </div>
       <div class="row">
-        <div><label>Invoice date</label><input id="inv-date" type="date"></div>
-        <div><label>Due date</label><input id="inv-due" type="date"></div>
+        <div><label id="lbl-date">Invoice date</label><input id="inv-date" type="date"></div>
+        <div><label id="lbl-due">Due date</label><input id="inv-due" type="date"></div>
       </div>
       <h3>Line items</h3>
       <div class="items" id="inv-items"></div>
@@ -98,6 +106,15 @@
     <!-- ME -->
     <section data-tab="me">
       <h2>My details</h2>
+      <h3 id="account">Account &amp; sync</h3>
+      <p class="drive-status" id="cloud-status">Checking…</p>
+      <p class="muted">Sign in with Google to keep your clients, settings, logos and invoice history in your own private account, and use them on your other computers. Your PDF files stay on this computer. <a href="https://bryceh1996.github.io/invoicer/privacy.html" id="privacy-link">Privacy policy</a></p>
+      <div class="actions">
+        <button class="btn primary" id="cloud-signin">Sign in with Google</button>
+        <button class="btn" id="cloud-sync" hidden>Sync now</button>
+        <button class="btn" id="cloud-signout" hidden>Sign out</button>
+        <button class="btn danger" id="cloud-delete" hidden>Delete my cloud data</button>
+      </div>
       <div class="row">
         <div><label>Your name</label><input data-me="name"></div>
         <div><label>Company name (optional)</label><input data-me="company" placeholder="Leave blank to invoice as yourself"></div>
@@ -164,6 +181,10 @@
         <div><label>Next invoice number</label><input data-set="nextNumber" type="number"></div>
       </div>
       <div class="row">
+        <div><label>Quote number prefix</label><input data-set="quotePrefix"></div>
+        <div><label>Next quote number</label><input data-set="nextQuoteNumber" type="number"></div>
+      </div>
+      <div class="row">
         <div><label>Page size</label>
           <select data-set="pageSize"><option value="letter">Letter</option><option value="a4">A4</option></select></div>
         <div><label>Name for tax on invoices</label>
@@ -213,11 +234,20 @@
       </div>
     </section>
 
+    <!-- REPORTS -->
+    <section data-tab="reports">
+      <div class="title-row"><h2>Reports</h2><select id="rep-period"></select></div>
+      <p class="muted" id="rep-range"></p>
+      <div id="rep-body"></div>
+      <div class="actions"><button class="btn" id="rep-csv">Export to spreadsheet (CSV)</button></div>
+      <p class="muted">Totals include VAT/tax. Quotes aren't counted. Invoices saved before version 1.12.0 have no paid status, so they count as invoiced but not as paid or outstanding until you mark them paid in History.</p>
+    </section>
+
     <!-- HISTORY -->
     <section data-tab="history">
       <h2>History</h2>
       <table>
-        <thead><tr><th>No.</th><th>Client</th><th>Date</th><th class="num">Total</th><th>Backup</th><th></th></tr></thead>
+        <thead><tr><th>No.</th><th>Client</th><th>Date</th><th class="num">Total</th><th>Status</th><th>Backup</th><th></th></tr></thead>
         <tbody id="hist"></tbody>
       </table>
       <p class="muted" id="hist-empty">No invoices saved yet.</p>

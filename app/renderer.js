@@ -211,19 +211,23 @@ const client = id => clients.find(c => c.id === id);
 // Next invoice number = one past the highest number already saved in History,
 // never lower than the "Next invoice number" setting (so you can skip ahead).
 const numberOf = s => { const m = String(s || '').match(/(\d+)\D*$/); return m ? parseInt(m[1], 10) : NaN; };
-function nextNumberValue() {
-  const used = invoices.map(h => numberOf(h.inv.number)).filter(n => !isNaN(n));
-  return Math.max(num(settings.nextNumber), used.length ? Math.max(...used) + 1 : 0);
+// Invoices and quotes are numbered separately (INV-… and QUO-… by default).
+const docType = h => (h.inv && h.inv.type) === 'quote' ? 'quote' : 'invoice';
+function nextNumberValue(type = 'invoice') {
+  const used = invoices.filter(h => docType(h) === type).map(h => numberOf(h.inv.number)).filter(n => !isNaN(n));
+  const floor = type === 'quote' ? num(settings.nextQuoteNumber || 1) : num(settings.nextNumber);
+  return Math.max(floor, used.length ? Math.max(...used) + 1 : 0);
 }
-const nextInvoiceNumber = () => (settings.prefix || '') + nextNumberValue();
+const nextInvoiceNumber = (type = 'invoice') => (type === 'quote' ? (settings.quotePrefix ?? 'QUO-') : (settings.prefix || '')) + nextNumberValue(type);
 const numberUsed = s => invoices.some(h => h.inv.number === s);
 
-function newDraft(clientId) {
+// Quotes default to being valid for 30 days; invoices are due after the client's payment terms.
+function newDraft(clientId, type = 'invoice') {
   const c = client(clientId) || clients[0];
   const today = iso(new Date());
   return {
-    clientId: c ? c.id : null, number: nextInvoiceNumber(),
-    date: today, due: c ? addDays(today, c.dueDays) : today, period: today.slice(0, 7),
+    type, clientId: c ? c.id : null, number: nextInvoiceNumber(type),
+    date: today, due: type === 'quote' ? addDays(today, 30) : c ? addDays(today, c.dueDays) : today, period: today.slice(0, 7),
     items: c && c.items && c.items.length ? clone(c.items).map(normItem) : [normItem({ kind: 'fixed' })],
   };
 }
@@ -295,10 +299,25 @@ function renderRates() {
 }
 function renderInvoice() {
   renderClientOptions(); renderRates();
+  const quote = draft.type === 'quote';
+  $$('#doc-type button').forEach(b => b.classList.toggle('on', b.dataset.type === (quote ? 'quote' : 'invoice')));
+  $('#inv-heading').textContent = quote ? 'New quote' : 'New invoice';
+  $('#lbl-number').textContent = quote ? 'Quote no.' : 'Invoice no.';
+  $('#lbl-date').textContent = quote ? 'Quote date' : 'Invoice date';
+  $('#lbl-due').textContent = quote ? 'Valid until' : 'Due date';
+  $('#download').textContent = quote ? 'Save quote' : 'Save invoice';
   $('#inv-number').value = draft.number; $('#inv-period').value = draft.period;
   $('#inv-date').value = draft.date; $('#inv-due').value = draft.due;
   renderItems();
 }
+// Switching between invoice and quote keeps the client and lines, with the right number and dates.
+$('#doc-type').onclick = e => {
+  const type = e.target.dataset.type;
+  if (!type || type === (draft.type || 'invoice')) return;
+  const items = draft.items, period = draft.period;
+  draft = newDraft(draft.clientId, type); draft.items = items; draft.period = period;
+  renderInvoice(); changed();
+};
 function renderItems() {
   const box = $('#inv-items');
   box.innerHTML = '<div class="hd">Type</div><div class="hd">Description</div><div class="hd">Qty</div><div class="hd">Amount</div><div></div>';
@@ -345,7 +364,7 @@ function changed() { settings.draft = draft; persist('settings'); updateTotal();
 
 $('#inv-client').onchange = e => {
   const keep = draft.number;
-  draft = newDraft(e.target.value); draft.number = keep;
+  draft = newDraft(e.target.value, draft.type); draft.number = keep;
   renderInvoice(); changed();
 };
 $('#inv-number').oninput = e => { draft.number = e.target.value; changed(); };
@@ -353,7 +372,7 @@ $('#inv-period').oninput = e => { draft.period = e.target.value; changed(); };
 $('#inv-date').oninput = e => {
   draft.date = e.target.value;
   const c = client(draft.clientId);
-  if (c && e.target.value) { draft.due = addDays(e.target.value, c.dueDays); $('#inv-due').value = draft.due; }
+  if (c && e.target.value) { draft.due = addDays(e.target.value, draft.type === "quote" ? 30 : c.dueDays); $('#inv-due').value = draft.due; }
   changed();
 };
 $('#inv-due').oninput = e => { draft.due = e.target.value; changed(); };
@@ -366,11 +385,12 @@ $('#open-client-folder').onclick = () => {
   const c = client(draft.clientId);
   if (c && store.openClientFolder) store.openClientFolder(c.company);
 };
-$('#reset-draft').onclick =() => { draft = newDraft(draft.clientId); renderInvoice(); changed(); };
+$('#reset-draft').onclick =() => { draft = newDraft(draft.clientId, draft.type); renderInvoice(); changed(); };
 
 function fileName(c, inv, me) {
   const p = parseDate((inv.period || inv.date.slice(0, 7)) + '-01');
-  return `${c.company || 'Client'} Invoice - ${MONTHS[p.getMonth()]} ${p.getFullYear()} - ${me.name || 'Me'}.pdf`.replace(/[\\/:*?"<>|]/g, '');
+  const word = inv.type === 'quote' ? 'Quote' : 'Invoice';
+  return `${c.company || 'Client'} ${word} - ${MONTHS[p.getMonth()]} ${p.getFullYear()} - ${me.name || 'Me'}.pdf`.replace(/[\\/:*?"<>|]/g, '');
 }
 
 // History entries keep the design they were saved with (older ones have none, so they stay Classic).
@@ -437,18 +457,21 @@ $('#download').onclick = async () => {
   };
   const t = invoiceTotals(entry.lines, entry.c);
   entry.total = t.total; entry.subtotal = t.subtotal; entry.tax = t.tax;
+  if (docType(entry) === 'invoice') entry.tracked = true; // paid / overdue tracking (from 1.12.0)
   // Re-saving an invoice number that's already in History overwrites that same file.
   const previous = invoices.find(h => h.inv.number === entry.inv.number);
   entry.file = previous ? previous.file : '';
+  if (previous) { entry.paidAt = previous.paidAt; entry.tracked = previous.tracked; }
   const path = await savePdf(entry);
   if (!path) return; // save failed (already reported)
   const idx = invoices.findIndex(h => h.inv.number === entry.inv.number);
   if (idx >= 0) invoices[idx] = entry; else invoices.unshift(entry);
   persist('invoices');
-  settings.nextNumber = nextNumberValue();
-  // Invoice is done: start the next one for the same client with the following number.
-  draft = newDraft(draft.clientId);
-  renderInvoice(); changed(); renderHistory(); renderMe();
+  settings.nextNumber = nextNumberValue('invoice');
+  settings.nextQuoteNumber = nextNumberValue('quote');
+  // Done: start the next one for the same client, of the same kind, with the following number.
+  draft = newDraft(draft.clientId, draft.type);
+  renderInvoice(); changed(); renderHistory(); renderMe(); renderOverdue();
 };
 
 // ---------- clients tab ----------
@@ -489,7 +512,8 @@ $('#cl-delete').onclick = () => {
 // Switch the invoice being drafted to this client (keeping its number) and show it.
 function invoiceClient(id) {
   if (!client(id)) return;
-  if (draft.clientId !== id) { const keep = draft.number; draft = newDraft(id); draft.number = keep; }
+  if (draft.type === 'quote') draft = newDraft(id, 'invoice'); // reminders are for invoices
+  else if (draft.clientId !== id) { const keep = draft.number; draft = newDraft(id, 'invoice'); draft.number = keep; }
   renderInvoice(); changed(); go('invoice');
 }
 $('#cl-invoice').onclick = () => invoiceClient(editingClient);
@@ -536,8 +560,8 @@ async function renderTaskStatus(anyOn) {
 }
 // How reminders work while Invoicer is closed, in this computer's terms.
 $('#rem-how').textContent = IS_MAC
-  ? 'Invoicer doesn\'t need to be open. While any client has a reminder, macOS runs a quick check every day at 9am and when you log in, using a launch agent called "local.invoicer.reminders". Turning off every reminder removes it. If you delete Invoicer, turn your reminders off first.'
-  : 'Invoicer doesn\'t need to be open. While any client has a reminder, a Windows Task Scheduler task called "Invoicer reminders" checks every day at 9am, or as soon as your PC is on if it was off then. Turning off every reminder, or uninstalling Invoicer, removes that task.';
+  ? 'Invoicer doesn\'t need to be open. While any client has a reminder or an invoice is unpaid, macOS runs a quick check every day at 9am and when you log in, using a launch agent called "local.invoicer.reminders". It’s removed once there are no reminders and no unpaid invoices. Overdue invoices are also reminded about the day after they’re due, then weekly until marked paid. If you delete Invoicer, turn your reminders off first.'
+  : 'Invoicer doesn\'t need to be open. While any client has a reminder or an invoice is unpaid, a Windows Task Scheduler task called "Invoicer reminders" checks every day at 9am, or as soon as your PC is on if it was off then. It’s removed once there are no reminders and no unpaid invoices, or when you uninstall Invoicer. Overdue invoices are also reminded about the day after they’re due, then weekly until marked paid.';
 async function setReminder(id, day) {
   const c = client(id); if (!c) return;
   c.reminderDay = day;
@@ -635,6 +659,102 @@ $('#drive-retry').onclick = async () => {
 };
 
 // ---------- history tab ----------
+// ---------- reports ----------
+// Periods: South African tax years (1 March – end of February) and calendar years that have invoices.
+function reportPeriods() {
+  const years = new Set(invoices.filter(h => docType(h) === 'invoice').map(h => Number(h.inv.date.slice(0, 4))));
+  const now = new Date(); years.add(now.getFullYear());
+  const list = [];
+  for (const y of [...years].sort((a, b) => b - a)) {
+    list.push({ id: `tax-${y}`, label: `Tax year ${y}/${String(y + 1).slice(2)} (Mar ${y} – Feb ${y + 1})`, from: `${y}-03-01`, to: `${y + 1}-02-${(y + 1) % 4 === 0 ? 29 : 28}` });
+    list.push({ id: `cal-${y}`, label: `Calendar year ${y}`, from: `${y}-01-01`, to: `${y}-12-31` });
+  }
+  // The tax year that started before 1 March belongs to the previous year's label.
+  const ty = now.getMonth() < 2 ? now.getFullYear() - 1 : now.getFullYear();
+  if (!list.some(p => p.id === `tax-${ty}`)) list.unshift({ id: `tax-${ty}`, label: `Tax year ${ty}/${String(ty + 1).slice(2)} (Mar ${ty} – Feb ${ty + 1})`, from: `${ty}-03-01`, to: `${ty + 1}-02-${(ty + 1) % 4 === 0 ? 29 : 28}` });
+  return { list, current: `tax-${ty}` };
+}
+function reportRows(p) {
+  return invoices.filter(h => docType(h) === 'invoice' && h.inv.date >= p.from && h.inv.date <= p.to).map(h => {
+    const subtotal = h.subtotal ?? round2((h.lines || []).reduce((s, l) => s + (Number(l.amount) || 0), 0));
+    const tax = h.tax ?? round2((h.total || 0) - subtotal);
+    return { h, cur: curCode(h.c.currency), subtotal, tax, total: Number(h.total) || 0, status: payStatus(h) };
+  });
+}
+function renderReports() {
+  const { list, current } = reportPeriods();
+  const sel = $('#rep-period');
+  const keep = sel.value;
+  sel.innerHTML = list.map(p => `<option value="${p.id}">${esc(p.label)}</option>`).join('');
+  sel.value = list.some(p => p.id === keep) ? keep : current;
+  const p = list.find(x => x.id === sel.value);
+  const rows = reportRows(p);
+  $('#rep-range').textContent = `${shortDate(p.from)} ${p.from.slice(0, 4)} to ${shortDate(p.to)} ${p.to.slice(0, 4)} · ${rows.length} invoice${rows.length === 1 ? '' : 's'}`;
+  if (!rows.length) { $('#rep-body').innerHTML = '<p class="muted">No invoices in this period.</p>'; return; }
+  const sum = (arr, f) => round2(arr.reduce((s, r) => s + f(r), 0));
+  const byCur = [...new Set(rows.map(r => r.cur))];
+  const table = (head, body) => `<table class="report"><thead><tr>${head.map((h, i) => `<th${i ? ' class="num"' : ''}>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
+  const tr = cells => `<tr>${cells.map((c, i) => `<td${i ? ' class="num"' : ''}>${c}</td>`).join('')}</tr>`;
+  const label = settings.taxLabel || 'VAT';
+  let html = '<h3>Totals</h3>' + table(['Currency', 'Invoices', 'Excl. ' + label, label, 'Total', 'Paid', 'Outstanding'], byCur.map(cur => {
+    const r = rows.filter(x => x.cur === cur);
+    return tr([cur, r.length, money(sum(r, x => x.subtotal), cur), money(sum(r, x => x.tax), cur), `<b>${money(sum(r, x => x.total), cur)}</b>`,
+      money(sum(r.filter(x => x.status.key === 'paid'), x => x.total), cur),
+      money(sum(r.filter(x => x.status.key === 'unpaid' || x.status.key === 'overdue'), x => x.total), cur)]);
+  }).join(''));
+  const clientsIn = [...new Set(rows.map(r => `${r.h.c.company}\u0000${r.cur}`))];
+  html += '<h3>By client</h3>' + table(['Client', 'Invoices', 'Total', 'Paid', 'Outstanding'], clientsIn.map(k => {
+    const [name, cur] = k.split('\u0000'); const r = rows.filter(x => x.h.c.company === name && x.cur === cur);
+    return tr([esc(name), r.length, money(sum(r, x => x.total), cur), money(sum(r.filter(x => x.status.key === 'paid'), x => x.total), cur),
+      money(sum(r.filter(x => x.status.key === 'unpaid' || x.status.key === 'overdue'), x => x.total), cur)]);
+  }).join(''));
+  const months = [...new Set(rows.map(r => r.h.inv.date.slice(0, 7)))].sort();
+  html += '<h3>By month</h3>' + table(['Month', ...byCur], months.map(m => {
+    const d = parseDate(m + '-01');
+    return tr([`${MONTHS[d.getMonth()]} ${d.getFullYear()}`, ...byCur.map(cur => money(sum(rows.filter(x => x.cur === cur && x.h.inv.date.startsWith(m)), x => x.total), cur))]);
+  }).join(''));
+  $('#rep-body').innerHTML = html;
+}
+$('#rep-period').onchange = renderReports;
+$('#rep-csv').onclick = () => {
+  const { list } = reportPeriods(); const p = list.find(x => x.id === $('#rep-period').value) || list[0];
+  const q = v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+  const lines = [['Invoice', 'Date', 'Due', 'Client', 'Currency', 'Excl. tax', 'Tax', 'Total', 'Status', 'Paid on'].join(',')]
+    .concat(reportRows(p).map(r => [r.h.inv.number, r.h.inv.date, r.h.inv.due || '', r.h.c.company, r.cur, r.subtotal.toFixed(2), r.tax.toFixed(2), r.total.toFixed(2), r.status.key === 'untracked' ? '' : r.status.key, r.h.paidAt || ''].map(q).join(',')));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' }));
+  a.download = `Invoicer report - ${p.label.replace(/[\\/:*?"<>|()]/g, '').replace(/\s+/g, ' ').trim()}.csv`;
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+};
+
+// ---------- paid / unpaid / overdue ----------
+const todayIso = () => iso(new Date());
+// Invoices saved from 1.12.0 on are tracked; older ones show "–" (but can still be marked paid).
+function payStatus(h) {
+  if (docType(h) === 'quote') return h.convertedTo ? { key: 'quote', label: `Invoiced (${h.convertedTo})` } : { key: 'quote', label: 'Quote' };
+  if (h.paidAt) return { key: 'paid', label: `Paid ${shortDate(h.paidAt)}` };
+  if (!h.tracked) return { key: 'untracked', label: '–' };
+  if (h.inv.due && h.inv.due < todayIso()) return { key: 'overdue', label: 'Overdue' };
+  return { key: 'unpaid', label: 'Unpaid' };
+}
+const overdueList = () => invoices.filter(h => payStatus(h).key === 'overdue');
+function renderOverdue() {
+  $('#overdue-bars').innerHTML = overdueList().map(h =>
+    `<div class="update-bar remind overdue"><span><b>${esc(h.inv.number)}</b> for ${esc(h.c.company)} (${esc(money(h.total, h.c.currency))}) was due on ${esc(shortDate(h.inv.due))}.</span>
+     <button class="btn primary" data-pay="${esc(h.id)}">Mark paid</button>
+     <button class="btn" data-go-hist="1">History</button></div>`).join('');
+}
+function setPaid(id, paid) {
+  const h = invoices.find(x => x.id === id); if (!h) return;
+  h.paidAt = paid ? todayIso() : null;
+  persist('invoices'); renderHistory(); renderOverdue();
+  toast(paid ? `${h.inv.number} marked as paid` : `${h.inv.number} marked as unpaid`);
+}
+$('#overdue-bars').onclick = e => {
+  if (e.target.dataset.pay) setPaid(e.target.dataset.pay, true);
+  else if (e.target.dataset.goHist) go('history');
+};
+
 function renderHistory() {
   $('#hist-empty').style.display = invoices.length ? 'none' : '';
   const driveCell = h => h.backup
@@ -642,12 +762,21 @@ function renderHistory() {
     : h.backupError !== undefined
       ? `<button class="link warn" data-act="backup" data-id="${h.id}" title="${esc(h.backupError)}. Click to retry.">⚠ Retry</button>`
       : '<span class="muted">–</span>';
+  const statusCell = h => {
+    const s = payStatus(h);
+    const btn = docType(h) === 'quote'
+      ? `<button class="link" data-act="convert" data-id="${h.id}" title="Start an invoice from this quote">Make invoice</button>`
+      : h.paidAt ? `<button class="link" data-act="unpaid" data-id="${h.id}">Undo</button>`
+        : `<button class="link" data-act="paid" data-id="${h.id}">Mark paid</button>`;
+    return `<span class="status ${s.key}">${esc(s.label)}</span> ${btn}`;
+  };
   $('#hist').innerHTML = invoices.map(h =>
     `<tr><td>${esc(h.inv.number)}</td><td>${esc(h.c.company)}</td><td>${esc(h.inv.date)}</td>
      <td class="num">${esc(money(h.total, h.c.currency))}</td>
+     <td>${statusCell(h)}</td>
      <td>${driveCell(h)}</td>
      <td class="num">${h.file && window.api ? `<button class="btn" data-act="open" data-id="${h.id}">Open</button>` : ''}
-     <button class="btn" data-act="pdf" data-id="${h.id}" title="Save this invoice again (e.g. after editing your details)">Re-save</button>
+     <button class="btn" data-act="pdf" data-id="${h.id}" title="Save this again (e.g. after editing your details)">Re-save</button>
      <button class="btn" data-act="copy" data-id="${h.id}" title="Start a new invoice with these lines">Copy</button>
      <button class="x" data-act="del" data-id="${h.id}" title="Remove from history">×</button></td></tr>`).join('');
 }
@@ -662,6 +791,15 @@ $('#hist').onclick = async e => {
     const ok = await backupPdf(h);
     persist('invoices'); renderHistory();
     toast(ok ? `${h.inv.number} backed up to Google Drive` : `Backup failed: ${h.backupError}`);
+  } else if (act === 'paid' || act === 'unpaid') {
+    setPaid(id, act === 'paid');
+  } else if (act === 'convert') {
+    // A new invoice for the quote's client, with its lines; the quote remembers which invoice it became.
+    draft = newDraft(client(h.c.id) ? h.c.id : undefined, 'invoice');
+    draft.items = clone(h.inv.items).map(normItem);
+    h.convertedTo = draft.number; persist('invoices'); renderHistory();
+    renderInvoice(); changed(); go('invoice');
+    toast(`Started ${draft.number} from quote ${h.inv.number}. Check it and click Save invoice.`);
   } else if (act === 'copy') {
     draft = newDraft(client(h.c.id) ? h.c.id : undefined);
     draft.items = clone(h.inv.items).map(normItem);
@@ -683,6 +821,8 @@ function go(tab) {
   $$('nav button').forEach(b => b.classList.toggle('active', b.dataset.go === tab));
   if (tab === 'clients') renderClients();
   if (tab === 'notifications') renderNotifications();
+  if (tab === 'reports') renderReports();
+  if (tab === 'history') renderHistory();
 }
 const tabShown = tab => $(`section[data-tab="${tab}"]`).classList.contains('show');
 $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
@@ -700,7 +840,7 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
   });
   if (migrated) await store.save('clients', clients);
   settings.nextNumber = nextNumberValue();
-  settings.taxLabel ||= 'VAT';
+  settings.taxLabel ||= 'VAT'; settings.quotePrefix ??= 'QUO-'; settings.nextQuoteNumber ||= 1;
   if (settings.logo && store.loadLogo) logo = await loadLogoImage(await store.loadLogo(settings.logo));
   if (settings.bank?.logo && store.loadLogo) bankLogo = await loadLogoImage(await store.loadLogo(settings.bank.logo));
   renderDesign(); renderBank();
@@ -708,11 +848,18 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
     ? { ...settings.draft, items: settings.draft.items.map(normItem) }
     : newDraft();
   // A leftover draft whose number was already saved gets the next free number.
-  if (numberUsed(draft.number)) draft.number = nextInvoiceNumber();
+  if (numberUsed(draft.number)) draft.number = nextInvoiceNumber(draft.type || "invoice");
   editingClient = clients[0]?.id;
-  renderInvoice(); renderClients(); renderMe(); renderHistory(); renderZoom(); refreshPreview();
+  renderInvoice(); renderClients(); renderMe(); renderHistory(); renderOverdue(); renderZoom(); refreshPreview();
   if (store.version) $('#app-version').textContent = 'v' + await store.version();
   renderUpdates();
+  if (store.cloudStatus) {
+    store.onCloudStatus(renderCloud);
+    // Newer data arrived from another computer: reload to show it (pending local edits are dropped,
+    // since the synced copy already includes everything that was saved).
+    store.onDataChanged(() => { Object.keys(timers).forEach(k => { clearTimeout(timers[k]); timers[k] = null; }); location.reload(); });
+    renderCloud(await store.cloudStatus());
+  } else renderCloud({ configured: false });
   checkForUpdate();
   setInterval(checkForUpdate, 30 * 60 * 1000);
   await refreshBackupStatus();
@@ -722,7 +869,7 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
   if (store.dueReminders) {
     // Main sends this whenever clients or invoices are saved, and on each check.
     store.onReminders(due => { renderReminders(due); if (tabShown('notifications')) renderNotifications(); });
-    store.onReminderOpen(invoiceClient);
+    store.onReminderOpen(id => id === 'history' ? go('history') : invoiceClient(id));
     renderReminders(await store.dueReminders());
     // Opened by clicking a reminder notification while Invoicer was closed.
     const open = await store.takeReminderOpen();
@@ -742,6 +889,57 @@ async function checkForUpdate(manual) {
   $('#update-bar').hidden = false;
   return u;
 }
+
+// ---------- account & cloud sync ----------
+const ago = iso => {
+  if (!iso) return 'never';
+  const s = Math.round((Date.now() - new Date(iso)) / 1000);
+  return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : new Date(iso).toLocaleDateString();
+};
+let cloudState = { configured: false };
+function renderCloud(s) {
+  cloudState = s || cloudState;
+  const c = cloudState, el = $('#cloud-status'), pill = $('#cloud-pill');
+  if (!c.configured) { el.className = 'drive-status'; el.textContent = 'Sign-in is only available in the desktop app.'; $('#cloud-signin').hidden = true; pill.hidden = true; return; }
+  $('#cloud-signin').hidden = c.signedIn;
+  $('#cloud-signin').disabled = c.busy === 'signing-in';
+  $('#cloud-signin').textContent = c.busy === 'signing-in' ? 'Waiting for the browser…' : 'Sign in with Google';
+  for (const id of ['#cloud-sync', '#cloud-signout', '#cloud-delete']) $(id).hidden = !c.signedIn;
+  $('#cloud-sync').disabled = !!c.busy;
+  if (!c.signedIn) {
+    el.className = 'drive-status' + (c.error ? ' err' : '');
+    el.textContent = c.busy === 'signing-in' ? 'Finish signing in with Google in your browser…' : c.error ? `Not signed in. ${c.error}` : 'Not signed in. Your data is only on this computer.';
+    pill.hidden = true;
+    return;
+  }
+  const when = c.busy ? 'syncing now…' : `last synced ${ago(c.lastSync)}`;
+  el.className = 'drive-status ' + (c.error ? 'err' : 'on');
+  el.textContent = `Signed in as ${c.email}, ${when}.` + (c.pending && !c.busy ? ` ${c.pending} change${c.pending === 1 ? '' : 's'} waiting to upload.` : '') + (c.error ? ` Problem: ${c.error}` : '');
+  pill.hidden = false;
+  pill.className = 'cloud-pill' + (c.error ? ' err' : '');
+  pill.textContent = c.error ? '⚠ Sync problem' : c.busy ? '↻ Syncing…' : '☁ Synced';
+  pill.title = el.textContent;
+}
+$('#cloud-pill').onclick = () => { go('me'); $('#account').scrollIntoView({ behavior: 'smooth' }); };
+$('#privacy-link').onclick = e => { e.preventDefault(); store.openExternal && store.openExternal(e.target.href); };
+$('#cloud-signin').onclick = async () => {
+  await flushSaves();
+  const r = await store.cloudSignIn();
+  if (r && r.error) toast(r.error); else toast('Signed in. Your data is now backed up to your account.');
+  renderCloud(await store.cloudStatus());
+};
+$('#cloud-sync').onclick = async () => { await flushSaves(); const r = await store.cloudSync(); if (r && r.error) toast(r.error); };
+$('#cloud-signout').onclick = async () => {
+  if (!confirm('Sign out? Your data stays on this computer and in your account; it just stops syncing.')) return;
+  await flushSaves(); await store.cloudSignOut(); renderCloud(await store.cloudStatus());
+};
+$('#cloud-delete').onclick = async () => {
+  if (!confirm('Delete your Invoicer data from the cloud and sign out?\n\nYour clients, settings and invoice history are removed from your account. Everything on this computer stays as it is. This can\'t be undone.')) return;
+  const r = await store.cloudDelete();
+  toast(r && r.error ? `Couldn't delete: ${r.error}` : 'Your cloud data was deleted and you are signed out.');
+  renderCloud(await store.cloudStatus());
+};
+setInterval(() => renderCloud(), 30 * 1000); // keeps "last synced … ago" current
 
 // ---------- updates settings ----------
 async function renderUpdates() {

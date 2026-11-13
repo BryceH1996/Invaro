@@ -594,13 +594,13 @@ async function renderTaskStatus(anyOn) {
   if (!t.enabled) { el.className = 'drive-status'; el.textContent = 'The daily check is only set up by the installed app.'; }
   else if (t.problem && anyOn) { el.className = 'drive-status err'; el.textContent = t.problem; }
   else if (t.exists) { el.className = 'drive-status on'; el.textContent = `The daily reminder check is on. Next check: ${t.nextRun || 'unknown'}.`; }
-  else if (anyOn) { el.className = 'drive-status err'; el.textContent = "Couldn't set up the daily reminder check, so reminders only appear while Invoicer is open."; }
+  else if (anyOn) { el.className = 'drive-status err'; el.textContent = "Couldn't set up the daily reminder check, so reminders only appear while Invaro is open."; }
   else { el.className = 'drive-status'; el.textContent = 'No reminders set, so nothing is scheduled.'; }
 }
-// How reminders work while Invoicer is closed, in this computer's terms.
+// How reminders work while Invaro is closed, in this computer's terms.
 $('#rem-how').textContent = IS_MAC
-  ? 'Invoicer doesn\'t need to be open. While any client has a reminder or an invoice is unpaid, macOS runs a quick check every day at 9am and when you log in, using a launch agent called "local.invoicer.reminders". It’s removed once there are no reminders and no unpaid invoices. Overdue invoices are also reminded about the day after they’re due, then weekly until marked paid. If you delete Invoicer, turn your reminders off first.'
-  : 'Invoicer doesn\'t need to be open. While any client has a reminder or an invoice is unpaid, a Windows Task Scheduler task called "Invoicer reminders" checks every day at 9am, or as soon as your PC is on if it was off then. It’s removed once there are no reminders and no unpaid invoices, or when you uninstall Invoicer. Overdue invoices are also reminded about the day after they’re due, then weekly until marked paid.';
+  ? 'Invaro doesn\'t need to be open. While any client has a reminder or an invoice is unpaid, macOS runs a quick check every day at 9am and when you log in, using a launch agent called "local.invoicer.reminders". It’s removed once there are no reminders and no unpaid invoices. Overdue invoices are also reminded about the day after they’re due, then weekly until marked paid. If you delete Invaro, turn your reminders off first.'
+  : 'Invaro doesn\'t need to be open. While any client has a reminder or an invoice is unpaid, a Windows Task Scheduler task called "Invaro reminders" checks every day at 9am, or as soon as your PC is on if it was off then. It’s removed once there are no reminders and no unpaid invoices, or when you uninstall Invaro. Overdue invoices are also reminded about the day after they’re due, then weekly until marked paid.';
 async function setReminder(id, day) {
   const c = client(id); if (!c) return;
   c.reminderDay = day;
@@ -616,7 +616,7 @@ $('#rem-list').onclick = async e => {
 };
 $('#rem-test').onclick = async () => {
   const r = await store.testNotification();
-  toast(r && r.error ? r.error : `Test notification sent. If you didn't see it, check ${IS_MAC ? 'System Settings → Notifications → Invoicer' : 'Windows Settings → System → Notifications'}.`);
+  toast(r && r.error ? r.error : `Test notification sent. If you didn't see it, check ${IS_MAC ? 'System Settings → Notifications → Invaro' : 'Windows Settings → System → Notifications'}.`);
 };
 $('#rem-all-off').onclick = async () => {
   if (!confirm('Turn off invoice reminders for every client? This also removes the daily reminder check.')) return;
@@ -762,7 +762,7 @@ $('#rep-csv').onclick = () => {
     .concat(reportRows(p).map(r => [r.h.inv.number, r.h.inv.date, r.h.inv.due || '', r.h.c.company, r.cur, r.subtotal.toFixed(2), r.tax.toFixed(2), r.total.toFixed(2), r.status.key === 'untracked' ? '' : r.status.key, r.h.paidAt || ''].map(q).join(',')));
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' }));
-  a.download = `Invoicer report - ${p.label.replace(/[\\/:*?"<>|()]/g, '').replace(/\s+/g, ' ').trim()}.csv`;
+  a.download = `Invaro report - ${p.label.replace(/[\\/:*?"<>|()]/g, '').replace(/\s+/g, ' ').trim()}.csv`;
   a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 };
 
@@ -910,7 +910,7 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
     store.onReminders(due => { renderReminders(due); if (tabShown('notifications')) renderNotifications(); });
     store.onReminderOpen(id => id === 'history' ? go('history') : invoiceClient(id));
     renderReminders(await store.dueReminders());
-    // Opened by clicking a reminder notification while Invoicer was closed.
+    // Opened by clicking a reminder notification while Invaro was closed.
     const open = await store.takeReminderOpen();
     if (open) invoiceClient(open);
   }
@@ -924,7 +924,7 @@ async function checkForUpdate(manual) {
   const u = await store.checkUpdate().catch(() => null);
   if (!u || (u.version === dismissedVersion && !manual)) return u;
   const note = (u.notes || '').split('\n')[0].trim();
-  $('#update-msg').textContent = `Invoicer ${u.version} is available (you have ${u.current}).` + (note ? ' ' + note : '');
+  $('#update-msg').textContent = `Invaro ${u.version} is available (you have ${u.current}).` + (note ? ' ' + note : '');
   $('#update-bar').hidden = false;
   return u;
 }
@@ -976,7 +976,7 @@ $('#cloud-signout').onclick = async () => {
   await flushSaves(); await store.cloudSignOut(); renderCloud(await store.cloudStatus());
 };
 $('#cloud-delete').onclick = async () => {
-  if (!confirm('Delete your Invoicer data from the cloud and sign out?\n\nYour clients, settings and invoice history are removed from your account. Everything on this computer stays as it is. This can\'t be undone.')) return;
+  if (!confirm('Delete your Invaro data from the cloud and sign out?\n\nYour clients, settings and invoice history are removed from your account. Everything on this computer stays as it is. This can\'t be undone.')) return;
   const r = await store.cloudDelete();
   toast(r && r.error ? `Couldn't delete: ${r.error}` : 'Your cloud data was deleted and you are signed out.');
   renderCloud(await store.cloudStatus());
@@ -989,7 +989,7 @@ async function renderUpdates() {
   const s = await store.updateInfo();
   $('#upd-repo').textContent = s.repo || '';
   $('#upd-status').className = 'drive-status on';
-  $('#upd-status').textContent = `You have Invoicer ${s.version}.`;
+  $('#upd-status').textContent = `You have Invaro ${s.version}.`;
 }
 $('#upd-releases').onclick = () => store.openReleases && store.openReleases();
 $('#upd-check').onclick = async () => {
@@ -1000,7 +1000,7 @@ $('#upd-check').onclick = async () => {
 };
 if (store.onUpdateProgress) store.onUpdateProgress(pct => { $('#update-msg').textContent = `Downloading the update… ${pct}%`; });
 $('#update-later').onclick = () => {
-  dismissedVersion = $('#update-msg').textContent.match(/Invoicer (\S+)/)?.[1];
+  dismissedVersion = $('#update-msg').textContent.match(/Invaro (\S+)/)?.[1];
   $('#update-bar').hidden = true;
 };
 $('#update-install').onclick = async () => {

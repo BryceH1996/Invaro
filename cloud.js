@@ -1,15 +1,15 @@
-// Sign-in with Google (through Supabase) and cloud sync of Invoicer's data.
+// Sign-in with Google (through Supabase) and cloud sync of Invaro's data.
 //
 // Each data file (clients, settings, invoices) is one row in the Supabase table public.documents,
 // owned by the signed-in user; row level security keeps everyone's rows private (see SQL in the
 // README). Your logo and bank logo travel inside the settings row.
 //
 // Sign-in uses the OAuth "PKCE" flow for desktop apps: the browser opens Supabase's Google sign-in,
-// which hands a one-time code back to a tiny web server Invoicer runs on 127.0.0.1:47823 for a
+// which hands a one-time code back to a tiny web server Invaro runs on 127.0.0.1:47823 for a
 // few minutes. The session is stored encrypted by the operating system (safeStorage).
 //
 // Sync rules: local files are always the working copy. Every save marks that file as changed and
-// uploads it a few seconds later. Every few minutes (and when the window gets focus) Invoicer
+// uploads it a few seconds later. Every few minutes (and when the window gets focus) Invaro
 // checks for newer copies from your other computers and downloads them. If both sides changed
 // the same file, this computer's copy wins and the cloud copy is kept in <data>/conflicts.
 const { app, shell, safeStorage, dialog } = require('electron');
@@ -105,7 +105,7 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
         if (u.pathname !== '/auth/callback') { res.writeHead(404); return res.end(); }
         const code = u.searchParams.get('code'), err = u.searchParams.get('error_description') || u.searchParams.get('error');
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(code ? page('You\'re signed in', 'You can close this tab and go back to Invoicer.') : page('Sign-in didn\'t finish', err || 'Go back to Invoicer and try again.'));
+        res.end(code ? page('You\'re signed in', 'You can close this tab and go back to Invaro.') : page('Sign-in didn\'t finish', err || 'Go back to Invaro and try again.'));
         finish(code ? null : new Error(err || 'Sign-in was cancelled'), code);
       });
       const timer = setTimeout(() => finish(new Error('Sign-in timed out. Try again.')), 3 * 60 * 1000);
@@ -251,7 +251,7 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
       if (!choice) {
         const { response } = await dialog.showMessageBox(parentWindow(), {
           type: 'question', buttons: ['Use my cloud data', "Replace the cloud with this computer's data"], defaultId: 0, cancelId: 0,
-          message: 'Your account already has Invoicer data.',
+          message: 'Your account already has Invaro data.',
           detail: "Use my cloud data: this computer switches to the clients and invoices saved in your account (this computer's current files are backed up in the data folder first).\n\nReplace the cloud: this computer's clients and invoices are uploaded and replace what's in your account.",
         });
         choice = response === 0 ? 'cloud' : 'upload';

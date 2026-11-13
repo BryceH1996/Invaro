@@ -3,26 +3,37 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { spawn, execFile } = require('child_process');
-app.setName('Invoicer');
+app.setName('Invaro');
 const IS_MAC = process.platform === 'darwin', IS_WIN = process.platform === 'win32';
+// Invaro was called Invoicer up to 1.14. Anyone who used it then keeps their existing folders
+// (the app folder, Documents\Invoicer, My Drive\Invoicer Backups): saved invoices remember their
+// full paths, and the sign-in is encrypted against the old app folder. New installs use "Invaro".
+const OLD_NAME = 'Invoicer';
+const keepOld = (oldDir, newDir) => fs.existsSync(oldDir) && !fs.existsSync(newDir) ? oldDir : newDir;
 // Tests run with their own profile so they never clash with the installed app.
 if (process.env.INVOICER_PROFILE) app.setPath('userData', process.env.INVOICER_PROFILE);
+else {
+  // Not keepOld: Electron may already have created the new folder by the time this runs.
+  const oldProfile = path.join(app.getPath('appData'), OLD_NAME);
+  if (fs.existsSync(path.join(oldProfile, 'Local State')) || fs.existsSync(path.join(oldProfile, 'config.json'))) app.setPath('userData', oldProfile);
+}
 // Started by Windows Task Scheduler to check reminders: no window unless a notification is clicked.
 // (--hidden came from 1.6.0's start-with-Windows entry, which is removed on start.)
 const CHECK_ONLY = process.argv.includes('--check-reminders') || process.argv.includes('--hidden');
-// One copy at a time: starting Invoicer again shows the open window (or just runs the check).
+// One copy at a time: starting Invaro again shows the open window (or just runs the check).
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 if (app.isPackaged && IS_WIN) app.setAppUserModelId('local.invoicer.app'); // needed for Windows notifications
 const ICON = path.join(__dirname, 'build', 'icon.png');
 
-// Data lives as plain JSON in a folder the user picks (default: Documents\Invoicer).
-// The chosen folder is remembered in %APPDATA%\Invoicer\config.json.
+// Data lives as plain JSON in a folder the user picks (default: Documents\Invaro).
+// The chosen folder is remembered in %APPDATA%\Invaro\config.json.
 const FILES = { clients: 'clients.json', settings: 'settings.json', invoices: 'invoices.json' };
 const configPath = () => path.join(app.getPath('userData'), 'config.json');
 function readConfig() { try { return JSON.parse(fs.readFileSync(configPath(), 'utf8')); } catch (e) { return {}; } }
 function writeConfig(cfg) { fs.mkdirSync(path.dirname(configPath()), { recursive: true }); fs.writeFileSync(configPath(), JSON.stringify(cfg, null, 2)); }
 function resolveDataDir() {
-  return process.env.INVOICER_DATA || readConfig().dataDir || path.join(app.getPath('documents'), 'Invoicer');
+  const docs = app.getPath('documents');
+  return process.env.INVOICER_DATA || readConfig().dataDir || keepOld(path.join(docs, OLD_NAME), path.join(docs, 'Invaro'));
 }
 let DATA_DIR;
 
@@ -69,8 +80,8 @@ function readJson(name) {
   } catch (e) {
     if (e.code === 'ENOENT') { writeJson(name, SEED[name]); return SEED[name]; }
     // Never overwrite a file we couldn't parse — tell the user and stop.
-    dialog.showErrorBox('Invoicer: could not read data',
-      `${file(name)} is not valid JSON:\n\n${e.message}\n\nFix the file (or delete it to start fresh) and reopen Invoicer.`);
+    dialog.showErrorBox('Invaro: could not read data',
+      `${file(name)} is not valid JSON:\n\n${e.message}\n\nFix the file (or delete it to start fresh) and reopen Invaro.`);
     app.exit(1);
     throw e;
   }
@@ -92,9 +103,9 @@ function createWindow(show) {
     height: 880,
     minWidth: 900,
     minHeight: 600,
-    title: 'Invoicer',
+    title: 'Invaro',
     autoHideMenuBar: true,
-    backgroundColor: '#f7f5ef',
+    backgroundColor: '#EEF4F6',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -219,9 +230,9 @@ ipcMain.handle('logo:remove', (_e, kind) => { removeLogos(kind); return true; })
 
 // ---------- Google Drive backups ----------
 // Google Drive for desktop shows your Drive as a "My Drive" folder (usually G:\My Drive,
-// or %USERPROFILE%\My Drive in mirror mode) and syncs it online. Invoicer copies every
-// saved invoice into "My Drive\Invoicer Backups", or into a folder you pick yourself.
-const BACKUP_FOLDER = 'Invoicer Backups';
+// or %USERPROFILE%\My Drive in mirror mode) and syncs it online. Invaro copies every
+// saved invoice into "My Drive\Invaro Backups", or into a folder you pick yourself.
+const BACKUP_FOLDER = 'Invaro Backups';
 const isDir = p => { try { return fs.statSync(p).isDirectory(); } catch (e) { return false; } };
 function findMyDrive() {
   if (process.env.INVOICER_MYDRIVE) return isDir(process.env.INVOICER_MYDRIVE) ? process.env.INVOICER_MYDRIVE : null;
@@ -237,10 +248,10 @@ function findMyDrive() {
   candidates.push(path.join(os.homedir(), 'My Drive'));
   return candidates.find(isDir) || null;
 }
-// The folder to back up to: the user's choice, else My Drive\Invoicer Backups.
+// The folder to back up to: the user's choice, else My Drive\Invaro Backups.
 function backupTarget(chosen) {
   const myDrive = findMyDrive();
-  const dir = chosen || (myDrive ? path.join(myDrive, BACKUP_FOLDER) : null);
+  const dir = chosen || (myDrive ? keepOld(path.join(myDrive, `${OLD_NAME} Backups`), path.join(myDrive, BACKUP_FOLDER)) : null);
   return { myDrive, dir, auto: !chosen, ready: !!dir && (isDir(dir) || isDir(path.dirname(dir))) };
 }
 ipcMain.handle('backup:status', (_e, chosen) => backupTarget(chosen));
@@ -248,7 +259,7 @@ ipcMain.handle('backup:status', (_e, chosen) => backupTarget(chosen));
 ipcMain.handle('backup:write', safe((_e, bytes, name, chosen, client) => {
   const t = backupTarget(chosen);
   if (!t.dir) throw new Error("Google Drive for desktop isn't installed or signed in");
-  // Create "Invoicer Backups" inside an existing folder, but never invent the drive itself:
+  // Create "Invaro Backups" inside an existing folder, but never invent the drive itself:
   // a missing parent usually means Google Drive isn't running.
   if (!isDir(t.dir)) {
     if (!isDir(path.dirname(t.dir))) throw new Error(`Can't reach ${t.dir}. Is Google Drive running?`);
@@ -280,11 +291,11 @@ ipcMain.handle('shell:external', (_e, url) => {
   if (EXTERNAL_OK.some(re => re.test(String(url)))) return shell.openExternal(url);
 });
 
-// Switch data folder. If the chosen folder already has Invoicer data, use it;
+// Switch data folder. If the chosen folder already has Invaro data, use it;
 // otherwise copy the current files there. Returns the new folder or null.
 ipcMain.handle('data:chooseDir', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
-    title: 'Choose where Invoicer keeps its data',
+    title: 'Choose where Invaro keeps its data',
     defaultPath: DATA_DIR,
     properties: ['openDirectory', 'createDirectory'],
   });
@@ -295,8 +306,8 @@ ipcMain.handle('data:chooseDir', async () => {
   if (hasData) {
     const { response } = await dialog.showMessageBox(win, {
       type: 'question', buttons: ['Use that data', 'Cancel'], defaultId: 0, cancelId: 1,
-      message: 'That folder already has Invoicer data.',
-      detail: 'Invoicer will switch to the clients and history in that folder. Your current folder is left untouched.',
+      message: 'That folder already has Invaro data.',
+      detail: 'Invaro will switch to the clients and history in that folder. Your current folder is left untouched.',
     });
     if (response !== 0) return null;
   } else {
@@ -339,7 +350,7 @@ function findUpdate() {
 // `npm run release` attaches each installer to a release on the public repo in package.json
 // ("updateRepo"), so any copy can check for and download updates without signing in.
 const UPDATE_REPO = require('./package.json').updateRepo;
-const GH_HEADERS = { 'User-Agent': 'Invoicer', Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+const GH_HEADERS = { 'User-Agent': 'Invaro', Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
 // The newest release on GitHub that has an installer, or null. Throws a readable error.
 async function githubLatest() {
   if (!UPDATE_REPO) return null;
@@ -353,7 +364,7 @@ async function githubLatest() {
 }
 // Downloads a release installer to the temp folder, reporting progress to the window.
 async function downloadAsset(u) {
-  const res = await fetch(u.asset, { headers: { 'User-Agent': 'Invoicer' } });
+  const res = await fetch(u.asset, { headers: { 'User-Agent': 'Invaro' } });
   if (!res.ok) throw new Error(`Download failed (${res.status}).`);
   const total = Number(res.headers.get('content-length')) || u.size || 0;
   const dest = path.join(os.tmpdir(), u.name);
@@ -386,34 +397,34 @@ ipcMain.handle('update:check', async () => {
 });
 // ---- macOS: replace the .app in place ----
 // The update is the zipped app. It's unpacked next to the temp folder, and a small shell script
-// swaps it in once Invoicer has quit, then opens the new version.
+// swaps it in once Invaro has quit, then opens the new version.
 const run = (cmd, args) => new Promise((ok, bad) => execFile(cmd, args, (err, out, errOut) => err ? bad(new Error(String(errOut || err.message).trim())) : ok(String(out))));
-const macAppBundle = () => path.resolve(process.execPath, '..', '..', '..'); // …/Invoicer.app/Contents/MacOS/Invoicer
+const macAppBundle = () => path.resolve(process.execPath, '..', '..', '..'); // …/Invaro.app/Contents/MacOS/Invaro
 function macUpdateProblem() {
   const appPath = macAppBundle();
-  if (!appPath.endsWith('.app')) return "Invoicer isn't running from an app, so it can't update itself.";
-  if (appPath.includes('/AppTranslocation/') || appPath.startsWith('/Volumes/')) return 'Move Invoicer into your Applications folder and open it from there, then update.';
+  if (!appPath.endsWith('.app')) return "Invaro isn't running from an app, so it can't update itself.";
+  if (appPath.includes('/AppTranslocation/') || appPath.startsWith('/Volumes/')) return 'Move Invaro into your Applications folder and open it from there, then update.';
   try { fs.accessSync(path.dirname(appPath), fs.constants.W_OK); }
-  catch (e) { return `Invoicer can't replace itself in ${path.dirname(appPath)}. Download the new version from the releases page instead.`; }
+  catch (e) { return `Invaro can't replace itself in ${path.dirname(appPath)}. Download the new version from the releases page instead.`; }
   return null;
 }
 async function installMacUpdate(zip) {
   const problem = macUpdateProblem();
   if (problem) throw new Error(problem);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invoicer-update-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'invaro-update-'));
   await run('/usr/bin/ditto', ['-x', '-k', zip, dir]);
   const fresh = fs.readdirSync(dir).find(f => f.endsWith('.app'));
   if (!fresh) throw new Error('The download had no app in it.');
   const script = path.join(dir, 'swap.sh');
   fs.writeFileSync(script, [
     '#!/bin/sh',
-    '# $1 = pid to wait for, $2 = installed app, $3 = new app',
+    '# $1 = pid to wait for, $2 = installed app, $3 = new app, $4 = where it goes (renamed Invoicer.app → Invaro.app)',
     'while kill -0 "$1" 2>/dev/null; do sleep 0.3; done',
-    'rm -rf "$2.old" && mv "$2" "$2.old" && mv "$3" "$2" && rm -rf "$2.old"',
-    'xattr -dr com.apple.quarantine "$2" 2>/dev/null',
-    'open "$2"',
+    'rm -rf "$2.old" && mv "$2" "$2.old" && rm -rf "$4" && mv "$3" "$4" && rm -rf "$2.old"',
+    'xattr -dr com.apple.quarantine "$4" 2>/dev/null',
+    'open "$4"',
   ].join('\n'));
-  spawn('/bin/sh', [script, String(process.pid), macAppBundle(), path.join(dir, fresh)], { detached: true, stdio: 'ignore' }).unref();
+  spawn('/bin/sh', [script, String(process.pid), macAppBundle(), path.join(dir, fresh), path.join(path.dirname(macAppBundle()), fresh)], { detached: true, stdio: 'ignore' }).unref();
 }
 
 ipcMain.handle('update:install', safe(async () => {
@@ -543,10 +554,10 @@ function checkReminders() {
 function quitIfIdle() { if (CHECK_ONLY && !win && !shown.size) app.quit(); }
 
 // ---------- the daily reminder check (Windows Task Scheduler / macOS launchd) ----------
-// While any client has a reminder, the system runs "Invoicer --check-reminders" every day at 9am
+// While any client has a reminder, the system runs "Invaro --check-reminders" every day at 9am
 // (or as soon as the computer is on and you're signed in, if it was off at 9). With no reminders
 // left, it's removed. On Windows the uninstaller removes it too (build/installer.nsh).
-const TASK = process.env.INVOICER_TASK_NAME || 'Invoicer reminders';
+const TASK = process.env.INVOICER_TASK_NAME || 'Invaro reminders';
 // In development the executable is Electron itself, which needs the app folder as its first argument.
 const checkArgs = () => [...(app.isPackaged ? [] : [app.getAppPath()]), '--check-reminders'];
 const xmlEsc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -561,7 +572,7 @@ const windowsScheduler = {
     const args = checkArgs().map(a => a.startsWith('--') ? a : `"${a}"`).join(' ');
     const xml = `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <RegistrationInfo><Description>Shows Invoicer's invoice reminders. Created by Invoicer and deleted when no client has a reminder.</Description></RegistrationInfo>
+  <RegistrationInfo><Description>Shows Invaro's invoice reminders. Created by Invaro and deleted when no client has a reminder.</Description></RegistrationInfo>
   <Triggers>
     <CalendarTrigger><StartBoundary>2026-01-01T09:00:00</StartBoundary><ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger>
   </Triggers>
@@ -576,7 +587,7 @@ const windowsScheduler = {
   </Settings>
   <Actions Context="Author"><Exec><Command>${xmlEsc(process.execPath)}</Command><Arguments>${xmlEsc(args)}</Arguments></Exec></Actions>
 </Task>`;
-    const xmlFile = path.join(os.tmpdir(), `invoicer-task-${process.pid}.xml`);
+    const xmlFile = path.join(os.tmpdir(), `invaro-task-${process.pid}.xml`);
     fs.writeFileSync(xmlFile, Buffer.from('﻿' + xml, 'utf16le'));
     const r = await schtasks(['/create', '/tn', TASK, '/xml', xmlFile, '/f']);
     fs.rmSync(xmlFile, { force: true });
@@ -603,7 +614,7 @@ const macScheduler = {
   // A copy run straight from the download (or the disk image) lives at a temporary path, which a
   // daily job can't point at. macOS fixes that once the app is in Applications.
   problem: () => app.isPackaged && (process.execPath.includes('/AppTranslocation/') || process.execPath.startsWith('/Volumes/'))
-    ? 'Move Invoicer into your Applications folder and open it from there to turn on reminders while it\'s closed.' : null,
+    ? 'Move Invaro into your Applications folder and open it from there to turn on reminders while it\'s closed.' : null,
   exists: async () => fs.existsSync(plistPath()),
   async create() {
     const programArgs = [process.execPath, ...checkArgs()].map(a => `    <string>${xmlEsc(a)}</string>`).join('\n');
@@ -646,6 +657,8 @@ function syncReminderTask(verify) {
     const want = remindersOn() && !scheduler.problem() ? process.execPath : null;
     let have = readReminderState().task || null;
     if (verify) {
+      // The task was called "Invoicer reminders" up to 1.14; this one replaces it.
+      if (IS_WIN && !process.env.INVOICER_TASK_NAME) await schtasks(['/delete', '/tn', `${OLD_NAME} reminders`, '/f']);
       if (!await scheduler.exists()) have = null;
       else if (!have) have = 'unknown'; // exists, but not one we recorded: rewrite or remove it
     }
@@ -672,7 +685,7 @@ ipcMain.handle('reminders:task', async () => {
 });
 ipcMain.handle('reminders:test', () => {
   if (!Notification.isSupported()) return { error: "This computer doesn't support notifications." };
-  new Notification({ title: 'Invoicer reminders are working', body: "This is how you'll be reminded to invoice a client.", icon: ICON }).show();
+  new Notification({ title: 'Invaro reminders are working', body: "This is how you'll be reminded to invoice a client.", icon: ICON }).show();
   return {};
 });
 ipcMain.handle('reminders:takeOpen', () => { const id = pendingOpen; pendingOpen = null; return id; });
@@ -682,13 +695,13 @@ ipcMain.handle('reminders:skip', (_e, id) => {
   return dueReminders();
 });
 
-// Starting Invoicer while it's already running: a scheduled check just re-checks, anything else shows the window.
+// Starting Invaro while it's already running: a scheduled check just re-checks, anything else shows the window.
 app.on('second-instance', (_e, argv) => {
   if (argv.includes('--check-reminders')) checkReminders(); else showWindow();
 });
 app.whenReady().then(async () => {
   DATA_DIR = resolveDataDir();
-  // 1.6.0 started Invoicer with Windows to sit in the tray; the scheduled task replaces that.
+  // 1.6.0 (then called Invoicer) started with Windows to sit in the tray; the scheduled task replaces that.
   if (app.isPackaged && IS_WIN && app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin) app.setLoginItemSettings({ openAtLogin: false, args: ['--hidden'] });
   // macOS: the usual app, Edit (for copy and paste) and Window menus. No View menu, so ⌘+ / ⌘− zoom
   // the invoice preview rather than the whole window.

@@ -39,10 +39,10 @@ jobs:
         run: npx electron-builder --mac --publish never
 
       - name: Check the signature
-        run: codesign --verify --deep --verbose=2 "dist/mac-universal/Invoicer.app"
+        run: codesign --verify --deep --verbose=2 "dist/mac-universal/Invaro.app"
 
       - name: Smoke test
-        run: node scripts/mac-smoke-test.js "dist/mac-universal/Invoicer.app"
+        run: node scripts/mac-smoke-test.js "dist/mac-universal/Invaro.app"
 
       - name: Attach to the release
         env:

@@ -1,4 +1,4 @@
-// electron-builder "afterSign" hook. Invoicer has no Apple Developer ID, so on macOS the finished
+// electron-builder "afterSign" hook. Invaro has no Apple Developer ID, so on macOS the finished
 // app gets an ad-hoc signature ("codesign --sign -") before the .dmg and .zip are made.
 // Apple silicon Macs won't open an app with no signature at all; with an ad-hoc one, people can
 // open it via System Settings → Privacy & Security → Open Anyway.

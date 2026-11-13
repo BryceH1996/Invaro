@@ -1,26 +1,28 @@
-# Invoicer
+# Invaro
 
-A small, no-fuss app for Windows and Mac, for freelancers who invoice the same clients every month. Pick a client, fill in your days or hours, and save a clean PDF invoice. Invoicer remembers the rest.
+A small, no-fuss app for Windows and Mac, for freelancers who invoice the same clients every month. Pick a client, fill in your days or hours, and save a clean PDF invoice. Invaro remembers the rest.
+
+Invaro was called **Invoicer** up to version 1.14. If you used it then, it carries on with your existing folders (the ones still named `Invoicer`), so nothing moves.
 
 ## Install
 
 **[⬇ Download the latest version](https://github.com/BryceH1996/invoicer/releases/latest)**
 
 **Windows**
-1. Download `Invoicer-Setup-<version>.exe` from the [latest release](https://github.com/BryceH1996/invoicer/releases/latest).
-2. Run it. Invoicer isn't code-signed yet, so your browser may say the file "isn't commonly downloaded" (choose **Keep**), and Windows may show "Windows protected your PC" (click **More info → Run anyway**). See [Is it safe?](#is-it-safe)
+1. Download `Invaro-Setup-<version>.exe` from the [latest release](https://github.com/BryceH1996/invoicer/releases/latest).
+2. Run it. Invaro isn't code-signed yet, so your browser may say the file "isn't commonly downloaded" (choose **Keep**), and Windows may show "Windows protected your PC" (click **More info → Run anyway**). See [Is it safe?](#is-it-safe)
 
-To remove it, go to **Settings → Apps → Installed apps → Invoicer → Uninstall**.
+To remove it, go to **Settings → Apps → Installed apps → Invaro → Uninstall**.
 
 **Mac** (Apple silicon and Intel, macOS 12 Monterey or later)
-1. Download `Invoicer-<version>-mac.dmg` from the [latest release](https://github.com/BryceH1996/invoicer/releases/latest), open it, and drag **Invoicer** into **Applications**.
-2. Open Invoicer from Applications. Because it isn't signed by Apple, macOS first says it can't check the app for malware. Click **Done**, then open **System Settings → Privacy & Security**, scroll down to "Invoicer was blocked…", click **Open Anyway**, and confirm. You only need to do this once.
+1. Download `Invaro-<version>-mac.dmg` from the [latest release](https://github.com/BryceH1996/invoicer/releases/latest), open it, and drag **Invaro** into **Applications**.
+2. Open Invaro from Applications. Because it isn't signed by Apple, macOS first says it can't check the app for malware. Click **Done**, then open **System Settings → Privacy & Security**, scroll down to "Invaro was blocked…", click **Open Anyway**, and confirm. You only need to do this once.
 
-To remove it, turn off any reminders on the **Notifications** tab first, then drag Invoicer from Applications to the Bin.
+To remove it, turn off any reminders on the **Notifications** tab first, then drag Invaro from Applications to the Bin.
 
-**Then**, fill in **My details**, add a client under **Clients**, and make your first invoice. Invoicer keeps itself up to date after that. Removing the app keeps your invoices and data.
+**Then**, fill in **My details**, add a client under **Clients**, and make your first invoice. Invaro keeps itself up to date after that. Removing the app keeps your invoices and data.
 
-![Making an invoice in Invoicer, with the live PDF preview on the right](docs/screenshot-invoice.png)
+![Making an invoice in Invaro, with the live PDF preview on the right](docs/screenshot-invoice.png)
 
 ## What it does
 
@@ -30,10 +32,10 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 - **EFT details:** print your bank, account holder, account number, account type, branch code, SWIFT code and payment reference at the bottom of every invoice, with your bank's logo. Pick a South African bank to fill in its branch and SWIFT codes.
 - **Business details:** your company name, VAT, tax and registration numbers, plus each client's VAT number. Set a tax rate for a client to add a VAT line to their invoices.
 - **Live preview:** the PDF updates as you type. Zoom with − / +, or Ctrl (⌘ on a Mac) with + / − / 0.
-- **A folder per client:** **Save invoice** puts the PDF straight into that client's folder, e.g. `Documents/Invoicer/Northwind Design Co/Northwind Design Co. Invoice - November 2026 - Alex Morgan.pdf`.
+- **A folder per client:** **Save invoice** puts the PDF straight into that client's folder, e.g. `Documents/Invaro/Northwind Design Co/Northwind Design Co. Invoice - November 2026 - Alex Morgan.pdf`.
 - **Numbering:** invoice numbers carry on from the last one you saved.
 - **History:** every saved invoice, ready to open, save again, or copy into a new one.
-- **Reminders:** pick a day each month for each client on the **Notifications** tab. Your computer then reminds you once a day until you've invoiced them, even when Invoicer is closed.
+- **Reminders:** pick a day each month for each client on the **Notifications** tab. Your computer then reminds you once a day until you've invoiced them, even when Invaro is closed.
 - **Paid or not:** mark invoices paid in **History**. Unpaid invoices past their due date show as overdue, and you're reminded the day after, then weekly.
 - **Quotes:** switch **New invoice** to **Quote** for a quote with its own numbering and a "valid until" date, then turn it into an invoice with one click.
 - **Reports:** see what you've invoiced, been paid, are owed and charged in VAT for a tax year (March to February) or calendar year, by client and by month, and export it to a spreadsheet.
@@ -47,24 +49,24 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 Each [release](https://github.com/BryceH1996/invoicer/releases) lists a **SHA-256 checksum** for every download. To check that your download is exactly the published file, run one of these in the folder you saved it to, and compare the result:
 
 ```powershell
-Get-FileHash .\Invoicer-Setup-<version>.exe     # Windows, in PowerShell
+Get-FileHash .\Invaro-Setup-<version>.exe     # Windows, in PowerShell
 ```
 ```bash
-shasum -a 256 Invoicer-<version>-mac.dmg       # Mac, in Terminal
+shasum -a 256 Invaro-<version>-mac.dmg       # Mac, in Terminal
 ```
 
 Releases also link a **VirusTotal** scan of the Windows installer and the Mac disk image, and all of the source code is in this repository.
 
-**What Invoicer does on your computer:**
-- **Your data:** it saves your data as plain files on your computer (see [Your data](#your-data)). There are no accounts, tracking or analytics, and Invoicer never uploads anything itself.
+**What Invaro does on your computer:**
+- **Your data:** it saves your data as plain files on your computer (see [Your data](#your-data)). There are no accounts, tracking or analytics, and Invaro never uploads anything itself.
 - **Your account (only if you sign in):** your clients, settings, logos and invoice history are synced to your own account, which only you can read. Your PDFs aren't uploaded. **My details → Account & sync → Delete my cloud data** removes it. See the [privacy policy](https://bryceh1996.github.io/invoicer/privacy.html).
-- **Reminders:** while at least one client has a reminder or an invoice is unpaid, it schedules a quick check once a day at 9am. On Windows that's a Task Scheduler task called "Invoicer reminders"; on a Mac it's a launch agent called `local.invoicer.reminders`, which also checks when you log in. Turning off your last reminder removes it, and on Windows so does uninstalling.
+- **Reminders:** while at least one client has a reminder or an invoice is unpaid, it schedules a quick check once a day at 9am. On Windows that's a Task Scheduler task called "Invaro reminders"; on a Mac it's a launch agent called `local.invoicer.reminders`, which also checks when you log in. Turning off your last reminder removes it, and on Windows so does uninstalling.
 - **Updates:** it checks this repository's releases when it starts and every 30 minutes. It only downloads and installs an update when you click **Restart & update**.
-- **Backups:** if Google Drive for desktop is installed, it copies saved invoices into your `My Drive` folder, and Google Drive uploads them as usual. Invoicer never signs in to Google itself.
+- **Backups:** if Google Drive for desktop is installed, it copies saved invoices into your `My Drive` folder, and Google Drive uploads them as usual. Invaro never signs in to Google itself.
 
 ## Your data
 
-Everything is in the `Invoicer` folder in your Documents (**My details → Data** shows the exact folder, and lets you move it):
+Everything is in the `Invaro` folder in your Documents (or `Invoicer`, if you've used it since before the rename). **My details → Data** shows the exact folder, and lets you move it:
 
 | File | What's in it |
 | --- | --- |
@@ -75,7 +77,7 @@ Everything is in the `Invoicer` folder in your Documents (**My details → Data*
 | `bank-logo.png` (or `.jpg`, …) | Your bank's logo, if you've added one |
 | `<Client>/*.pdf` | Your invoices, one folder per client |
 
-Invoicer's app folder also remembers which data folder you use, when each reminder last showed, and (if you sign in) your sign-in, encrypted by the operating system. It's `%APPDATA%\Invoicer` on Windows and `~/Library/Application Support/Invoicer` on a Mac. To back everything up, or to use the same data on another computer, move the data folder into OneDrive, iCloud Drive or similar.
+Invaro's app folder also remembers which data folder you use, when each reminder last showed, and (if you sign in) your sign-in, encrypted by the operating system. It's `%APPDATA%\Invaro` on Windows and `~/Library/Application Support/Invaro` on a Mac (or `Invoicer` in place of `Invaro`, for installs from before the rename). To back everything up, or to use the same data on another computer, move the data folder into OneDrive, iCloud Drive or similar.
 
 ---
 
@@ -86,7 +88,7 @@ Built with [Electron](https://www.electronjs.org/) and [jsPDF](https://github.co
 ```bash
 npm install
 npm start          # run it
-npm run dist       # build dist/Invoicer Setup <version>.exe (on Windows)
+npm run dist       # build dist/Invaro Setup <version>.exe (on Windows)
 npm run dist:mac   # build the Mac .dmg and .zip (on a Mac)
 ```
 

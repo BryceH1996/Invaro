@@ -1,4 +1,4 @@
-// Releases a new version of Invoicer:
+// Releases a new version of Invaro:
 //   1. checks this version hasn't been released already (git tag v<version>)
 //   2. builds the installer (electron-builder)
 //   3. publishes it to <data folder>/updates so installed copies offer the update
@@ -32,16 +32,20 @@ function fail(msg) { console.error(`\n✖ ${msg}`); process.exit(1); }
 const file = `${pkg.build.productName} Setup ${pkg.version}.exe`;
 const src = path.join(root, 'dist', file);
 
-// Same lookup as the app: chosen folder from config.json, else Documents\Invoicer
-// (Documents may be redirected to OneDrive, so ask Windows where it really is).
+// Same lookup as the app: chosen folder from config.json, else Documents\Invaro
+// (or the Invoicer folders, for installs from before the rename to Invaro).
+// Documents may be redirected to OneDrive, so ask Windows where it really is.
 function dataDir() {
   if (process.env.INVOICER_DATA) return process.env.INVOICER_DATA;
+  const appData = name => path.join(process.env.APPDATA, name);
   try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(process.env.APPDATA, 'Invoicer', 'config.json'), 'utf8'));
+    const profile = fs.existsSync(appData('Invoicer')) ? appData('Invoicer') : appData('Invaro');
+    const cfg = JSON.parse(fs.readFileSync(path.join(profile, 'config.json'), 'utf8'));
     if (cfg.dataDir) return cfg.dataDir;
   } catch (e) {}
   const docs = execSync('powershell -NoProfile -Command "[Environment]::GetFolderPath(\'MyDocuments\')"').toString().trim();
-  return path.join(docs, 'Invoicer');
+  const old = path.join(docs, 'Invoicer'), fresh = path.join(docs, 'Invaro');
+  return fs.existsSync(old) && !fs.existsSync(fresh) ? old : fresh;
 }
 
 function releaseLocally() {
@@ -52,7 +56,7 @@ function releaseLocally() {
 
   // ---- 2. build ----
   if (!noBuild) {
-    console.log(`Building Invoicer ${pkg.version}…`);
+    console.log(`Building Invaro ${pkg.version}…`);
     const r = spawnSync('npx', ['electron-builder', '--win', 'nsis', '--publish', 'never'], { cwd: root, stdio: 'inherit', shell: true });
     if (r.status !== 0) fail('Build failed. Nothing was published or pushed.');
   }
@@ -66,7 +70,7 @@ function releaseLocally() {
   fs.writeFileSync(path.join(dir, 'latest.json'), JSON.stringify({
     version: pkg.version, file, notes, releasedAt: new Date().toISOString(),
   }, null, 2));
-  console.log(`✔ Published Invoicer ${pkg.version} to ${dir}`);
+  console.log(`✔ Published Invaro ${pkg.version} to ${dir}`);
 
   // ---- 4. commit, tag and push to GitHub ----
   git('add -A');
@@ -78,7 +82,7 @@ function releaseLocally() {
     fs.unlinkSync(msgFile);
     console.log(`✔ Committed: ${staged.split('\n').length} changed file(s)`);
   }
-  git(`tag -a ${tag} -m "Invoicer ${pkg.version}${notes ? ' - ' + notes.replace(/"/g, "'") : ''}"`);
+  git(`tag -a ${tag} -m "Invaro ${pkg.version}${notes ? ' - ' + notes.replace(/"/g, "'") : ''}"`);
   console.log(`✔ Tagged ${tag}`);
   try {
     git('push -q origin main', { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -133,7 +137,7 @@ async function publishGithubRelease() {
   const token = githubToken();
   const gh = async (url, opts = {}) => {
     const res = await fetch(url.startsWith('http') ? url : `https://api.github.com/repos/${REPO}${url}`, {
-      ...opts, headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'invoicer-release', ...(opts.headers || {}) },
+      ...opts, headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'invaro-release', ...(opts.headers || {}) },
     });
     if (!res.ok && res.status !== 404) throw new Error(`GitHub ${res.status}: ${(await res.text()).slice(0, 300)}`);
     if (res.status === 404) return null;
@@ -142,7 +146,7 @@ async function publishGithubRelease() {
   let release = await gh(`/releases/tags/${tag}`);
   if (!release) {
     release = await gh('/releases', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-      tag_name: tag, name: `Invoicer ${pkg.version}`, body: notes || `Invoicer ${pkg.version}`,
+      tag_name: tag, name: `Invaro ${pkg.version}`, body: notes || `Invaro ${pkg.version}`,
     }) });
     console.log(`✔ Created GitHub release ${tag}`);
   }
@@ -168,7 +172,7 @@ async function publishGithubRelease() {
   for (const name of macNames) {
     const a = release.assets.find(x => x.name === name);
     if (!a) continue;
-    const res = await fetch(a.browser_download_url, { headers: { 'User-Agent': 'invoicer-release' } });
+    const res = await fetch(a.browser_download_url, { headers: { 'User-Agent': 'invaro-release' } });
     if (!res.ok) { console.warn(`⚠ Couldn't download ${name} to check it (${res.status}).`); continue; }
     files.push({ name, bytes: Buffer.from(await res.arrayBuffer()), url: a.browser_download_url });
   }
@@ -179,12 +183,12 @@ async function publishGithubRelease() {
   }
   const mb = f => `${(f.bytes.length / 1048576).toFixed(1)} MB`;
   const win = files[0], dmg = files.find(f => f.name.endsWith('.dmg'));
-  const intro = (release.body || '').split('\n\n### Download')[0].trim() || notes || `Invoicer ${pkg.version}`;
+  const intro = (release.body || '').split('\n\n### Download')[0].trim() || notes || `Invaro ${pkg.version}`;
   const scanned = files.filter(f => f.scan);
   const body = [
     intro, '', '### Download',
     `- **Windows:** [${win.name}](${win.url}) (${mb(win)}). Windows may warn that it's from an unknown publisher, because the app isn't code-signed yet: click **More info → Run anyway**.`,
-    ...(dmg ? [`- **Mac** (Apple silicon and Intel): [${dmg.name}](${dmg.url}) (${mb(dmg)}). Open it and drag Invoicer into Applications. The first time you open it, macOS says it can't check the app for malware, because it isn't signed by Apple: open **System Settings → Privacy & Security**, scroll down and click **Open Anyway**.`] : []),
+    ...(dmg ? [`- **Mac** (Apple silicon and Intel): [${dmg.name}](${dmg.url}) (${mb(dmg)}). Open it and drag Invaro into Applications. The first time you open it, macOS says it can't check the app for malware, because it isn't signed by Apple: open **System Settings → Privacy & Security**, scroll down and click **Open Anyway**.`] : []),
     '', '### Checksums (SHA-256)', '', '| File | SHA-256 |', '| --- | --- |',
     ...files.map(f => `| ${f.name} | \`${f.sha256}\` |`),
     '', 'To check a download, run `Get-FileHash .\\<file>` in PowerShell on Windows, or `shasum -a 256 <file>` in Terminal on a Mac, and compare it with the table. (The `.zip` is what installed Macs use to update themselves.)',

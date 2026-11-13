@@ -1,9 +1,9 @@
 {
-  "name": "invoicer",
-  "productName": "Invoicer",
-  "version": "1.14.0",
+  "name": "invaro",
+  "productName": "Invaro",
+  "version": "1.15.0",
   "description": "Desktop invoicing app: saved clients, rates, and PDF invoices.",
-  "author": "Invoicer",
+  "author": "Invaro",
   "main": "main.js",
   "private": true,
   "updateRepo": "BryceH1996/invoicer",
@@ -30,7 +30,7 @@
   },
   "build": {
     "appId": "local.invoicer.app",
-    "productName": "Invoicer",
+    "productName": "Invaro",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -53,7 +53,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Invoicer",
+      "shortcutName": "Invaro",
       "include": "build/installer.nsh"
     },
     "mac": {

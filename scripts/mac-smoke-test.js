@@ -3,15 +3,15 @@
 //   1. it opens and keeps running (no crash on start-up)
 //   2. a reminder check with a client reminder set creates the launchd job, then exits
 //   3. with the reminder turned off, the next check removes the job again
-// Usage: node scripts/mac-smoke-test.js path/to/Invoicer.app
+// Usage: node scripts/mac-smoke-test.js path/to/Invaro.app
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 
 const appPath = process.argv[2];
-const exe = path.join(appPath, 'Contents', 'MacOS', 'Invoicer');
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'invoicer-smoke-'));
+const exe = path.join(appPath, 'Contents', 'MacOS', 'Invaro');
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'invaro-smoke-'));
 const data = path.join(tmp, 'data'), profile = path.join(tmp, 'profile');
 fs.mkdirSync(data); fs.mkdirSync(profile);
 const plist = path.join(os.homedir(), 'Library', 'LaunchAgents', 'local.invoicer.reminders-test.plist');

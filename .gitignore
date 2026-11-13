@@ -2,7 +2,7 @@ node_modules/
 dist/
 .claude/
 
-# Real invoice data never belongs in the repo (it lives in Documents\Invoicer)
+# Real invoice data never belongs in the repo (it lives in Documents\Invaro)
 data/
 updates/
 *.pdf

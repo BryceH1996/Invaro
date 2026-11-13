@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src blob:; object-src blob:">
-<title>Invoicer</title>
+<title>Invaro</title>
 <link rel="stylesheet" href="style.css">
 <script src="../node_modules/jspdf/dist/jspdf.umd.min.js"></script>
 </head>
 <body>
 <header>
-  <h1>Invoicer</h1>
+  <h1 class="logo logo--dark" aria-label="Invaro"><svg viewBox="16 2 16 38" aria-hidden="true"><circle cx="24" cy="9" r="6"/><path d="M18 18 H30 V40 L27 37.5 L24 40 L21 37.5 L18 40 Z"/></svg><span aria-hidden="true">nvaro</span></h1>
   <nav>
     <button data-go="invoice" class="active">New invoice</button>
     <button data-go="clients">Clients</button>
@@ -62,7 +62,7 @@
         <button class="btn" id="open-client-folder" title="Open this client's invoice folder">Client folder</button>
         <button class="btn" id="reset-draft">Start fresh</button>
       </div>
-      <p class="muted">Hours, days and days off are priced from the client's rates. Lines that come to zero are left off the PDF. Saving puts the PDF in this client's own folder inside Invoicer's data folder, records it in History and starts the next invoice with the following number.</p>
+      <p class="muted">Hours, days and days off are priced from the client's rates. Lines that come to zero are left off the PDF. Saving puts the PDF in this client's own folder inside Invaro's data folder, records it in History and starts the next invoice with the following number.</p>
     </section>
 
     <!-- CLIENTS -->
@@ -197,7 +197,7 @@
       </div>
       <h3>Google Drive backup</h3>
       <p class="drive-status" id="drive-status">Checking…</p>
-      <p class="muted">Every saved invoice is copied into <b>My Drive\Invoicer Backups</b>, and Google Drive for desktop uploads it to your Google Drive online. Invoicer finds your My Drive folder automatically.</p>
+      <p class="muted">Every saved invoice is copied into <b>My Drive\Invaro Backups</b>, and Google Drive for desktop uploads it to your Google Drive online. Invaro finds your My Drive folder automatically.</p>
       <div class="actions">
         <button class="btn primary" id="drive-install" hidden>Get Google Drive for desktop</button>
         <button class="btn" id="drive-open" hidden>Open backup folder</button>
@@ -207,7 +207,7 @@
       </div>
       <h3>Updates</h3>
       <p class="drive-status" id="upd-status">Checking…</p>
-      <p class="muted">Invoicer checks GitHub (<span id="upd-repo"></span>) for new versions every 30 minutes and shows a bar at the top when one is ready.</p>
+      <p class="muted">Invaro checks GitHub (<span id="upd-repo"></span>) for new versions every 30 minutes and shows a bar at the top when one is ready.</p>
       <div class="actions">
         <button class="btn" id="upd-check">Check now</button>
         <button class="btn" id="upd-releases">See all versions</button>
@@ -230,7 +230,7 @@
         <tbody id="rem-list"></tbody>
       </table>
       <p class="muted" id="rem-empty">Add a client on the Clients tab first.</p>
-      <h3>While Invoicer is closed</h3>
+      <h3>While Invaro is closed</h3>
       <p class="drive-status" id="rem-task">Checking…</p>
       <p class="muted" id="rem-how"></p>
       <div class="actions">

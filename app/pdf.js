@@ -30,6 +30,9 @@ const TEMPLATES = {
   bold: { name: 'Bold', color: '#e8590c' },
   elegant: { name: 'Elegant', color: '#8c6d46' },
   sidebar: { name: 'Sidebar', color: '#1d4e5f' },
+  corporate: { name: 'Corporate', color: '#2f5d8a' },
+  mono: { name: 'Mono', color: '#3b3b3b' },
+  geometric: { name: 'Geometric', color: '#6a4c93' },
 };
 const SWATCHES = ['#bf9000', '#0b3d91', '#0f766e', '#2e7d32', '#9b2335', '#5b3fa6', '#c2410c', '#374151'];
 const hexRgb = h => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); const n = m ? parseInt(m[1], 16) : 0; return [n >> 16 & 255, n >> 8 & 255, n & 255]; };
@@ -148,7 +151,7 @@ function buildPdf(opts) {
   const ctx = { ...opts, doc, W: doc.internal.pageSize.getWidth(), H: doc.internal.pageSize.getHeight(),
     accent: hexRgb(d.color), isDefaultColor: d.color.toLowerCase() === TEMPLATES[d.template].color,
     totals: invoiceTotals(opts.lines, opts.c), taxLabel: opts.taxLabel || 'VAT', cur: opts.c.currency || '' };
-  ({ classic: drawClassic, wave: drawWave, minimal: drawMinimal, bold: drawBold, elegant: drawElegant, sidebar: drawSidebar })[d.template](ctx);
+  ({ classic: drawClassic, wave: drawWave, minimal: drawMinimal, bold: drawBold, elegant: drawElegant, sidebar: drawSidebar, corporate: drawCorporate, mono: drawMono, geometric: drawGeometric })[d.template](ctx);
   return doc;
 }
 
@@ -734,4 +737,204 @@ function drawSidebar({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accen
   }
   doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(...shade(accent, light ? 0.45 : 0));
   doc.text('Thank you!', mx, H - 40);
+}
+
+// ---------- Corporate ----------
+// Thin colour band, logo left with your details right, grey info cards, a striped table, and a
+// footer line with your registration details.
+function drawCorporate({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, totals, taxLabel, cur }) {
+  const L = 44, R = W - 44, w = docWords(inv), GREY = [244, 245, 247], DARK = shade(accent, 0.35);
+  const hasBank = bankRows(bank, inv).length > 0;
+  doc.setFillColor(...accent); doc.rect(0, 0, W, 8, 'F');
+
+  // logo (left) and your details (right)
+  const lb = logoBox(logo, 160, 52);
+  if (lb) placeLogo(doc, logo, L, 30, lb);
+  let ry = 40;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(30);
+  doc.text(me.company || me.name || '', R, ry, { align: 'right' }); ry += 15;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(110);
+  for (const ln of [me.company && me.name ? me.name : null, ...(me.address || '').split('\n').filter(Boolean), me.email, me.phone].filter(Boolean)) { doc.text(ln, R, ry, { align: 'right' }); ry += 12; }
+  let y = Math.max(30 + (lb ? lb.h : 0), ry) + 30;
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(30); doc.setTextColor(...DARK);
+  doc.text(w.Title, L, y); y += 18;
+
+  // two cards: billed to, and the document details
+  const cw = (R - L - 16) / 2, toL = toLines(c);
+  const meta = [[w.no, inv.number || ''], [w.date, pdfDate(inv.date)], [w.due, pdfDate(inv.due)]].filter(([, v]) => v);
+  const ch = Math.max(44 + toL.length * 12.5, 30 + meta.length * 18);
+  doc.setFillColor(...GREY); doc.roundedRect(L, y, cw, ch, 5, 5, 'F'); doc.roundedRect(L + cw + 16, y, cw, ch, 5, 5, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...accent); doc.text('BILLED TO', L + 14, y + 18);
+  doc.setFontSize(11); doc.setTextColor(30); doc.text(doc.splitTextToSize(c.company || '', cw - 28)[0] || '', L + 14, y + 33);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(95);
+  textBlock(doc, toL, L + 14, y + 47, 12.5, cw - 28);
+  const mx = L + cw + 30;
+  meta.forEach(([k, v], i) => {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(110); doc.text(k, mx, y + 22 + i * 18);
+    doc.setFont('helvetica', 'bold'); doc.setTextColor(30); doc.text(v, R - 14, y + 22 + i * 18, { align: 'right' });
+  });
+  y += ch + 24;
+
+  // items: coloured header, striped rows
+  y = itemTable(doc, { x: L, w: R - L, y, lines, cur, minRows: hasBank ? 3 : 5, rowH: 24,
+    header: {
+      h: 26, align: 'right', order: ['desc', 'qty', 'price', 'total'], widths: { desc: 0.5, qty: 0.12, price: 0.19, total: 0.19 },
+      draw(cols, y0) {
+        doc.setFillColor(...accent); doc.rect(L, y0, R - L, 26, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(isLight(accent) ? 20 : 255);
+        const names = { desc: 'DESCRIPTION', qty: 'QTY', price: 'RATE', total: 'AMOUNT' };
+        for (const col of cols) col.k === 'desc' ? doc.text(names.desc, col.x + 8, y0 + 17) : doc.text(names[col.k], col.x + col.w - 8, y0 + 17, { align: 'right' });
+      },
+      row(cols, y0, i) { if (i % 2) { doc.setFillColor(...GREY); doc.rect(L, y0, R - L, 24, 'F'); } },
+    } });
+
+  // totals card
+  const tw = 230, tx = R - tw, rows = totalRows(totals, taxLabel);
+  const th = 22 + rows.length * 18 + 30;
+  y += 16;
+  doc.setFillColor(...GREY); doc.roundedRect(tx, y, tw, th, 5, 5, 'F');
+  let ty = y + 22;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(80);
+  for (const [k, v] of rows) { doc.text(k, tx + 14, ty); doc.text(money(v, cur), R - 14, ty, { align: 'right' }); ty += 18; }
+  doc.setDrawColor(210); doc.setLineWidth(0.6); doc.line(tx + 14, ty - 8, R - 14, ty - 8);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(...DARK);
+  doc.text(w.totalDue, tx + 14, ty + 10); doc.text(money(totals.total, cur), R - 14, ty + 10, { align: 'right' });
+  y += th + 20;
+
+  const bh = drawBankBox(doc, { bank, bankLogo, inv, x: L, y, w: R - L, accent });
+  if (bh) y += bh + 16;
+  if (me.notes && me.notes.trim()) {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(90);
+    textBlock(doc, me.notes.split('\n'), L, y + 4, 13, R - L);
+  }
+  // footer: registration details
+  const foot = [me.company || me.name, ...idLines(me)].filter(Boolean).join('   ·   ');
+  doc.setDrawColor(225); doc.setLineWidth(0.6); doc.line(L, H - 46, R, H - 46);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(130);
+  doc.text(doc.splitTextToSize(foot, R - L)[0] || '', W / 2, H - 32, { align: 'center' });
+}
+
+// ---------- Mono ----------
+// A typewriter-style receipt: Courier throughout, dashed rules, centred header.
+function drawMono({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, totals, taxLabel, cur }) {
+  const L = 60, R = W - 60, MID = W / 2, w = docWords(inv), INK = [35, 35, 35];
+  const hasBank = bankRows(bank, inv).length > 0;
+  const dashed = (y, x1 = L, x2 = R) => { doc.setLineDashPattern([3, 2.5], 0); doc.setDrawColor(120); doc.setLineWidth(0.7); doc.line(x1, y, x2, y); doc.setLineDashPattern([], 0); };
+  let y = 48;
+  const lb = logoBox(logo, 120, 40);
+  if (lb) { placeLogo(doc, logo, MID - lb.w / 2, y, lb); y += lb.h + 16; }
+  doc.setFont('courier', 'bold'); doc.setFontSize(16); doc.setTextColor(...INK);
+  doc.text((me.company || me.name || '').toUpperCase(), MID, y + 8, { align: 'center' }); y += 24;
+  doc.setFont('courier', 'normal'); doc.setFontSize(9); doc.setTextColor(80);
+  for (const ln of [me.company && me.name ? me.name : null, ...(me.address || '').split('\n').filter(Boolean), [me.email, me.phone].filter(Boolean).join('  '), ...idLines(me)].filter(Boolean)) {
+    for (const part of doc.splitTextToSize(ln, R - L)) { doc.text(part, MID, y, { align: 'center' }); y += 11.5; }
+  }
+  y += 8; dashed(y); y += 30;
+
+  doc.setFont('courier', 'bold'); doc.setFontSize(22); doc.setTextColor(...accent);
+  doc.text(w.TITLE.split('').join(' '), MID, y, { align: 'center' }); y += 22;
+  doc.setFont('courier', 'normal'); doc.setFontSize(9.5); doc.setTextColor(...INK);
+  doc.text([`No. ${inv.number || ''}`, `Date ${pdfDate(inv.date)}`, inv.due ? `${w.dueShort} ${pdfDate(inv.due)}` : ''].filter(Boolean).join('   |   '), MID, y, { align: 'center' });
+  y += 26; dashed(y); y += 22;
+
+  doc.setFont('courier', 'bold'); doc.setFontSize(10); doc.setTextColor(...INK); doc.text('BILL TO:', L, y);
+  doc.setFont('courier', 'normal'); doc.setFontSize(10);
+  y = textBlock(doc, [c.company || '', ...toLines(c)], L, y + 15, 12.5, R - L) + 14;
+
+  y = itemTable(doc, { x: L, w: R - L, y, lines, cur, minRows: hasBank ? 2 : 4, rowH: 21, font: 'courier', fontSize: 10,
+    header: {
+      h: 22, align: 'right', order: ['desc', 'qty', 'price', 'total'], widths: { desc: 0.5, qty: 0.1, price: 0.2, total: 0.2 },
+      draw(cols, y0) {
+        doc.setFont('courier', 'bold'); doc.setFontSize(10); doc.setTextColor(...INK);
+        const names = { desc: 'ITEM', qty: 'QTY', price: 'RATE', total: 'AMOUNT' };
+        for (const col of cols) col.k === 'desc' ? doc.text(names.desc, col.x + 7, y0 + 13) : doc.text(names[col.k], col.x + col.w - 7, y0 + 13, { align: 'right' });
+        dashed(y0 + 20);
+      },
+      row() {},
+    } });
+  dashed(y + 4);
+
+  const tx = R - 230;
+  let ty = y + 24;
+  doc.setFont('courier', 'normal'); doc.setFontSize(10.5); doc.setTextColor(...INK);
+  for (const [k, v] of totalRows(totals, taxLabel)) { doc.text(k.toUpperCase(), tx, ty); doc.text(money(v, cur), R, ty, { align: 'right' }); ty += 16; }
+  dashed(ty - 6, tx, R); dashed(ty - 3, tx, R);
+  doc.setFont('courier', 'bold'); doc.setFontSize(13); doc.setTextColor(...accent);
+  doc.text('TOTAL', tx, ty + 13); doc.text(money(totals.total, cur), R, ty + 13, { align: 'right' });
+  y = ty + 40;
+
+  const bh = drawBankBox(doc, { bank, bankLogo, inv, x: L, y, w: R - L, accent });
+  if (bh) y += bh + 16;
+  if (me.notes && me.notes.trim()) {
+    doc.setFont('courier', 'normal'); doc.setFontSize(9.5); doc.setTextColor(70);
+    textBlock(doc, me.notes.split('\n'), L, y + 4, 12, R - L);
+  }
+  doc.setFont('courier', 'bold'); doc.setFontSize(10); doc.setTextColor(110);
+  doc.text('*  *  *   THANK YOU   *  *  *', MID, H - 40, { align: 'center' });
+}
+
+// ---------- Geometric ----------
+// Colour triangles in the corners, a bold title with a colour bar, and the total in a coloured pill.
+function drawGeometric({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, totals, taxLabel, cur }) {
+  const L = 48, R = W - 48, w = docWords(inv), INK = [30, 30, 36], ON = isLight(accent) ? 20 : 255;
+  const hasBank = bankRows(bank, inv).length > 0;
+  doc.setFillColor(...accent); doc.triangle(W - 210, 0, W, 0, W, 210, 'F');
+  doc.setFillColor(...tint(accent, 0.45)); doc.triangle(W - 120, 0, W, 0, W, 120, 'F');
+  doc.setFillColor(...tint(accent, 0.7)); doc.triangle(0, H - 90, 0, H, 90, H, 'F');
+
+  let y = 48;
+  const lb = logoBox(logo, 150, 46);
+  if (lb) { placeLogo(doc, logo, L, y, lb); y += lb.h + 22; } else y += 18;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(36); doc.setTextColor(...INK);
+  doc.text(w.TITLE, L, y + 26);
+  doc.setFillColor(...accent); doc.rect(L, y + 36, 64, 5, 'F');
+  y += 70;
+
+  // three small blocks: number, date, due
+  const meta = [[w.no, inv.number || ''], [w.date, pdfDate(inv.date)], [w.due, pdfDate(inv.due)]].filter(([, v]) => v);
+  meta.forEach(([k, v], i) => {
+    const x = L + i * 150;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...shade(accent, 0.2)); doc.text(k.toUpperCase(), x, y);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); doc.setTextColor(...INK); doc.text(v, x, y + 15);
+  });
+  y += 42;
+
+  // billed to / from
+  const colW = (R - L) / 2;
+  const block = (title, head, rest, x) => {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...shade(accent, 0.2)); doc.text(title, x, y);
+    doc.setFontSize(11.5); doc.setTextColor(...INK); let yy = textBlock(doc, [head], x, y + 17, 14, colW - 20);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(90);
+    return textBlock(doc, rest, x, yy, 12.5, colW - 20);
+  };
+  y = Math.max(block('BILLED TO', c.company || '', toLines(c), L), block('FROM', me.company || me.name || '', fromLines(me), L + colW)) + 22;
+
+  y = itemTable(doc, { x: L, w: R - L, y, lines, cur, minRows: hasBank ? 3 : 5, rowH: 25,
+    header: {
+      h: 26, align: 'right', order: ['desc', 'qty', 'price', 'total'], widths: { desc: 0.5, qty: 0.12, price: 0.19, total: 0.19 },
+      draw(cols, y0) {
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...shade(accent, 0.2));
+        const names = { desc: 'Description', qty: 'Qty', price: 'Rate', total: 'Amount' };
+        for (const col of cols) col.k === 'desc' ? doc.text(names.desc, col.x + 4, y0 + 15) : doc.text(names[col.k], col.x + col.w - 4, y0 + 15, { align: 'right' });
+        doc.setDrawColor(...accent); doc.setLineWidth(2); doc.line(L, y0 + 23, R, y0 + 23);
+      },
+      row(cols, y0) { doc.setDrawColor(230); doc.setLineWidth(0.6); doc.line(L, y0 + 25, R, y0 + 25); },
+    } });
+
+  const tx = R - 220;
+  let ty = y + 24;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(80);
+  for (const [k, v] of totalRows(totals, taxLabel)) { doc.text(k, tx, ty); doc.text(money(v, cur), R - 4, ty, { align: 'right' }); ty += 18; }
+  doc.setFillColor(...accent); doc.roundedRect(tx - 12, ty - 4, R - tx + 12, 32, 16, 16, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(ON);
+  doc.text(w.totalDue, tx + 4, ty + 16); doc.text(money(totals.total, cur), R - 14, ty + 16, { align: 'right' });
+  y = ty + 50;
+
+  const bh = drawBankBox(doc, { bank, bankLogo, inv, x: L, y, w: R - L, accent });
+  if (bh) y += bh + 16;
+  if (me.notes && me.notes.trim()) {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(90);
+    textBlock(doc, me.notes.split('\n'), L, y + 4, 13, R - L);
+  }
 }

@@ -159,6 +159,16 @@ function templateSketch(id, color) {
     sidebar: `<rect width="33" height="84" fill="${color}"/><rect x="6" y="8" width="16" height="6" fill="#fff" opacity=".9"/><rect x="6" y="22" width="20" height="3" fill="#fff" opacity=".5"/>
       <rect x="6" y="30" width="18" height="3" fill="#fff" opacity=".5"/><rect x="40" y="10" width="30" height="5" fill="#333"/><rect x="40" y="30" width="52" height="6" fill="${color}" opacity=".2"/>
       <rect x="40" y="42" width="52" height="1" fill="#ddd"/><rect x="40" y="50" width="52" height="1" fill="#ddd"/><rect x="66" y="66" width="26" height="5" fill="${color}"/>`,
+    corporate: `<rect width="100" height="3" fill="${color}"/><rect x="8" y="9" width="16" height="7" fill="${lt}"/><rect x="66" y="9" width="26" height="3" fill="#333"/>
+      <rect x="8" y="22" width="26" height="5" fill="${color}" opacity=".8"/><rect x="8" y="31" width="40" height="11" rx="2" fill="#eef0f3"/><rect x="52" y="31" width="40" height="11" rx="2" fill="#eef0f3"/>
+      <rect x="8" y="47" width="84" height="5" fill="${color}"/><rect x="8" y="57" width="84" height="4" fill="#eef0f3"/><rect x="60" y="66" width="32" height="10" rx="2" fill="#eef0f3"/>`,
+    mono: `<rect x="34" y="8" width="32" height="4" fill="#333"/><rect x="28" y="15" width="44" height="2" fill="${lt}"/>
+      <line x1="8" y1="22" x2="92" y2="22" stroke="#888" stroke-dasharray="2 1.5"/><rect x="34" y="27" width="32" height="5" fill="${color}"/>
+      <line x1="8" y1="38" x2="92" y2="38" stroke="#888" stroke-dasharray="2 1.5"/><rect x="8" y="44" width="84" height="2" fill="${lt}"/><rect x="8" y="50" width="84" height="2" fill="${lt}"/>
+      <line x1="8" y1="58" x2="92" y2="58" stroke="#888" stroke-dasharray="2 1.5"/><rect x="62" y="64" width="30" height="5" fill="${color}"/>`,
+    geometric: `<polygon points="62,0 100,0 100,38" fill="${color}"/><polygon points="80,0 100,0 100,20" fill="#fff" opacity=".45"/><polygon points="0,68 0,84 16,84" fill="${color}" opacity=".35"/>
+      <rect x="8" y="12" width="34" height="7" fill="#222"/><rect x="8" y="22" width="12" height="2" fill="${color}"/><rect x="8" y="34" width="84" height="1.5" fill="${color}"/>
+      <rect x="8" y="42" width="84" height="1" fill="#ddd"/><rect x="8" y="50" width="84" height="1" fill="#ddd"/><rect x="58" y="62" width="34" height="8" rx="4" fill="${color}"/>`,
   }[id];
   return `<svg viewBox="0 0 100 84"><rect width="100" height="84" fill="#fff"/>${body}</svg>`;
 }

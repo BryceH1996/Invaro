@@ -108,8 +108,14 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
         const u = new URL(req.url, REDIRECT);
         if (u.pathname !== '/auth/callback') { res.writeHead(404); return res.end(); }
         const code = u.searchParams.get('code'), err = u.searchParams.get('error_description') || u.searchParams.get('error');
+        // Some errors (e.g. "sign-in is invite-only") arrive after a "#", which never reaches this
+        // server: a tiny page sends them on as normal query parameters.
+        if (!code && !err && !u.searchParams.has('from_hash')) {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          return res.end(`<!doctype html><meta charset="utf-8"><script>location.replace('/auth/callback?from_hash=1&' + location.hash.slice(1))</script>`);
+        }
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(code ? page('You\'re signed in', 'You can close this tab and go back to Invaro.') : page('Sign-in didn\'t finish', err || 'Go back to Invaro and try again.'));
+        res.end(code ? page('You\'re signed in', 'You can close this tab and go back to Invaro.') : page('Sign-in didn\'t finish', err ? String(err).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`) : 'Go back to Invaro and try again.'));
         finish(code ? null : new Error(err || 'Sign-in was cancelled'), code);
       });
       const timer = setTimeout(() => finish(new Error('Sign-in timed out. Try again.')), 3 * 60 * 1000);

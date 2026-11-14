@@ -1,14 +1,15 @@
 {
   "name": "invaro",
   "productName": "Invaro",
-  "version": "1.18.0",
+  "version": "1.18.1",
   "description": "Desktop invoicing app: saved clients, rates, and PDF invoices.",
   "author": "Invaro",
   "main": "main.js",
   "private": true,
   "updateRepo": "BryceH1996/invoicer",
   "privateFiles": [
-    "SYNC.md"
+    "SYNC.md",
+    ".github/workflows/supabase-keepalive.yml"
   ],
   "cloud": {
     "url": "https://zjhewjjldmlaaqqzrmfs.supabase.co",

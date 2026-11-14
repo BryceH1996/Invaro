@@ -185,7 +185,8 @@ const teamCall = fn => safe(async (_e, ...args) => { if (!team) throw new Error(
 ipcMain.handle('team:status', () => team ? team.status() : { configured: false });
 ipcMain.handle('team:refresh', teamCall(() => team.refresh()));
 ipcMain.handle('team:create', teamCall(name => team.create(name)));
-ipcMain.handle('team:invite', teamCall(email => team.invite(email)));
+ipcMain.handle('team:invite', teamCall((email, role) => team.invite(email, role)));
+ipcMain.handle('team:setRole', teamCall((id, role) => team.setRole(id, role)));
 ipcMain.handle('team:cancelInvite', teamCall(id => team.cancelInvite(id)));
 ipcMain.handle('team:removeMember', teamCall(id => team.removeMember(id)));
 ipcMain.handle('team:leave', teamCall(() => team.leave()));

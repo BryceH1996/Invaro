@@ -555,12 +555,22 @@ async function claimNumber(entry) {
 let editingClient = null;
 function renderClients() {
   renderClientOptions();
+  $('#cl-new').hidden = !can('addClients');
   const c = client(editingClient) || clients[0];
   $('#cl-form').style.display = c ? '' : 'none';
   if (!c) return;
   editingClient = c.id; $('#cl-select').value = c.id;
   $('#cl-private').checked = !!c.private;
   $$('[data-cl]').forEach(el => setVal(el, c[el.dataset.cl] ?? ''));
+  // Your role in a team: a personal client is all yours; a shared one only as far as your role goes.
+  const mine = !teamState.team || c.private;
+  $$('[data-cl]').forEach(el => { el.disabled = !mine && (!can('editClients') || (BILLING.includes(el.dataset.cl) && !can('editBilling'))); });
+  $('#cl-private').closest('label').hidden = !mine && !can('deleteClients'); // making it personal takes it off the team
+  $('#cl-delete').hidden = !mine && !can('deleteClients');
+  $('#cl-invoice').hidden = !can('createInvoices');
+  $('#cl-locked').hidden = mine || can('editBilling');
+  $('#cl-locked').textContent = !can('editClients') ? `As ${aRole(teamState.team && teamState.team.role)}, you can look at ${teamState.team ? teamState.team.name : 'the team'}'s clients but not change them.`
+    : 'Rates, currency, payment terms and tax are greyed out: only an admin can change them for a shared client.';
   $('#cl-items').textContent = (c.items || []).length
     ? c.items.map(normItem).map(i => i.kind === 'fixed' ? `${i.desc} ${money(i.amount, c.currency)}` : `${i.desc} (${KINDS[i.kind].toLowerCase()})`).join(' · ')
     : 'None yet. Fill in lines on an invoice and click "Save lines as client default".';
@@ -681,7 +691,10 @@ $('#rem-all-off').onclick = async () => {
   persist('clients'); await flushSaves();
   renderClients(); renderNotifications();
 };
+let lastDue = [];
 function renderReminders(due) {
+  lastDue = due || [];
+  if (!can('createInvoices')) due = []; // reminders to invoice are for whoever makes the invoices
   $('#remind-bars').innerHTML = (due || []).map(r =>
     `<div class="update-bar remind"><span>Time to invoice <b>${esc(r.company)}</b> (reminder on ${esc(shortDate(r.date))}).</span>
      <button class="btn primary" data-remind="invoice" data-id="${esc(r.id)}">Invoice now</button>
@@ -1001,7 +1014,7 @@ const overdueList = () => invoices.filter(h => payStatus(h).key === 'overdue');
 function renderOverdue() {
   $('#overdue-bars').innerHTML = overdueList().map(h =>
     `<div class="update-bar remind overdue"><span><b>${esc(h.inv.number)}</b> for ${esc(h.c.company)} (${esc(money(h.total, h.c.currency))}) was due on ${esc(shortDate(h.inv.due))}.</span>
-     <button class="btn primary" data-pay="${esc(h.id)}">Mark paid</button>
+     ${can('markPaid') ? `<button class="btn primary" data-pay="${esc(h.id)}">Mark paid</button>` : ''}
      <button class="btn" data-go-hist="1">History</button></div>`).join('');
 }
 function setPaid(id, paid) {
@@ -1025,22 +1038,26 @@ function renderHistory() {
   const statusCell = h => {
     const s = payStatus(h);
     const btn = docType(h) === 'quote'
-      ? `<button class="link" data-act="convert" data-id="${h.id}" title="Start an invoice from this quote">Make invoice</button>`
-      : h.paidAt ? `<button class="link" data-act="unpaid" data-id="${h.id}">Undo</button>`
-        : `<button class="link" data-act="paid" data-id="${h.id}">Mark paid</button>`;
+      ? (make ? `<button class="link" data-act="convert" data-id="${h.id}" title="Start an invoice from this quote">Make invoice</button>` : '')
+      : !can('markPaid') ? ''
+        : h.paidAt ? `<button class="link" data-act="unpaid" data-id="${h.id}">Undo</button>`
+          : `<button class="link" data-act="paid" data-id="${h.id}">Mark paid</button>`;
     return `<span class="status ${s.key}">${esc(s.label)}</span> ${btn}`;
   };
+  // An accountant only opens and saves the PDFs; making, copying and removing is for the others.
+  const make = can('createInvoices');
+  $('#hist-empty').textContent = teamState.team && !can('seeAllInvoices') ? "You haven't saved any invoices yet. As a team member, you see only the invoices and quotes you make." : 'No invoices saved yet.';
   $('#hist').innerHTML = invoices.map(h =>
     `<tr><td>${esc(h.inv.number)}${h.savedBy ? `<div class="muted" title="Saved by ${esc(h.savedBy)}">by ${esc(h.savedBy.split('@')[0])}</div>` : ''}${h.private ? '<div class="muted" title="Personal: not shared with a team">🔒 Personal</div>' : ''}</td><td>${esc(h.c.company)}</td><td>${esc(h.inv.date)}</td>
      <td class="num">${esc(money(h.total, h.c.currency))}</td>
      <td>${statusCell(h)}</td>
      <td>${driveCell(h)}</td>
      <td class="num">${h.file && window.api ? `<button class="btn" data-act="open" data-id="${h.id}">Open</button>` : ''}
-     ${h.file || !window.api ? `<button class="btn" data-act="pdf" data-id="${h.id}" title="Save this again (e.g. after editing your details)">Re-save</button>`
+     ${h.file || !window.api ? (make ? `<button class="btn" data-act="pdf" data-id="${h.id}" title="Save this again (e.g. after editing your details)">Re-save</button>` : '')
        : `<button class="btn" data-act="pdf" data-id="${h.id}" title="Saved on another computer. Make the PDF on this one too.">Save PDF here</button>`}
-     <button class="btn" data-act="copy" data-id="${h.id}" title="Start a new invoice with these lines">Copy</button>
+     ${make ? `<button class="btn" data-act="copy" data-id="${h.id}" title="Start a new invoice with these lines">Copy</button>
      <button class="btn" data-act="private" data-id="${h.id}" title="${h.private ? 'Share this with your team' : 'Keep this off your team'}">${h.private ? 'Share' : 'Make personal'}</button>
-     <button class="x" data-act="del" data-id="${h.id}" title="Remove from history">×</button></td></tr>`).join('');
+     <button class="x" data-act="del" data-id="${h.id}" title="Remove from history">×</button>` : ''}</td></tr>`).join('');
 }
 $('#hist').onclick = async e => {
   const { act, id } = e.target.dataset;
@@ -1290,8 +1307,32 @@ function mergeRemote({ kinds, data }) {
   refreshPreview();
 }
 
-let teamState = { configured: false }, seenInvites = '';
-const ROLE_NAMES = { owner: 'Owner', member: 'Member' };
+let teamState = { configured: false }, seenInvites = '', rightsKey = '';
+const ROLE_NAMES = { admin: 'Admin', accountant: 'Accountant', member: 'Team member' };
+const aRole = r => ({ admin: 'an admin', accountant: 'the accountant' }[r] || 'a team member');
+const ROLE_HELP = {
+  admin: team => `You're an admin of ${team}: you see and change everything, and choose who's in the team and what they can do.`,
+  accountant: team => `You're the accountant for ${team}: you see every client and invoice and the reports, and mark invoices paid. You can't make or change invoices, clients or the business details.`,
+  member: team => `You're a team member of ${team}: you make invoices and quotes, and see only the ones you made. Rates, billing, paid status, reports and the business details are left to the admins and the accountant.`,
+};
+// What your role in the team lets you do (see RIGHTS in team.js). Outside a team: everything.
+const can = right => !teamState.team || !teamState.team.can || !!teamState.team.can[right];
+const BILLING = ['currency', 'dueDays', 'hourlyRate', 'dailyRate', 'dayOffRate', 'taxRate'];
+// Shows or hides what your role allows, everywhere. Runs when you join a team or your role changes.
+function applyRights() {
+  const key = JSON.stringify(teamState.team && teamState.team.can || null);
+  if (key === rightsKey) return;
+  rightsKey = key;
+  const tabs = { invoice: can('createInvoices'), notifications: can('createInvoices'), reports: can('reports') };
+  for (const [tab, on] of Object.entries(tabs)) $(`nav [data-go="${tab}"]`).hidden = !on;
+  const now = $$('section[data-tab]').find(s => s.classList.contains('show'));
+  if (now && tabs[now.dataset.tab] === false) go(can('createInvoices') ? 'invoice' : 'history');
+  const locked = !can('editBusiness');
+  $('#biz').inert = locked; $('#biz').classList.toggle('locked', locked);
+  $('#biz-locked').hidden = !locked;
+  $('#biz-locked').textContent = locked ? `Your business details, banking, invoice design and numbering are shared by ${teamState.team.name}. Only an admin can change them.` : '';
+  renderClients(); renderHistory(); renderOverdue(); renderReminders(lastDue);
+}
 const inviteMessage = (team, email) => `Hi! I've invited you to "${team}" in Invaro, so we can work on the same clients and invoices.
 
 1. Install Invaro: https://github.com/BryceH1996/invoicer/releases/latest
@@ -1309,30 +1350,33 @@ function renderTeam(s) {
   n.textContent = t.error ? `Team sync problem: ${t.error}` : t.notice || '';
   n.title = t.notice ? 'Click to dismiss' : '';
   // Invitations for you
-  $('#team-invited').innerHTML = (t.myInvites || []).map(i => `<div class="update-bar remind"><span><b>${esc(i.from)}</b> invited you to <b>${esc(i.team)}</b>.</span>
+  $('#team-invited').innerHTML = (t.myInvites || []).map(i => `<div class="update-bar remind"><span><b>${esc(i.from)}</b> invited you to <b>${esc(i.team)}</b> as ${aRole(i.role)}.</span>
     <button class="btn primary" data-team-join="${esc(i.id)}" data-team-name="${esc(i.team)}">Join</button>
     <button class="btn" data-team-decline="${esc(i.id)}">Not now</button></div>`).join('');
   const key = (t.myInvites || []).map(i => i.id).join();
   if (key && key !== seenInvites) toast(`You've been invited to ${t.myInvites[0].team}.`, 'Show', () => { go('me'); $('#account').scrollIntoView({ behavior: 'smooth' }); });
   seenInvites = key;
-  const inTeam = !!t.team, owner = inTeam && t.team.role === 'owner';
+  const inTeam = !!t.team, admin = inTeam && can('manageTeam');
+  applyRights();
   $('#team-title').textContent = inTeam ? `Team: ${t.team.name}` : 'Work together';
   $('#inv-private-label').textContent = inTeam ? `Personal: don't share this with ${t.team.name}` : "Personal: don't share this with a team";
   $('#team-help').textContent = inTeam
-    ? `Everyone in ${t.team.name} sees and edits the same clients, invoices, history and business details. Changes show up on each other's screens within seconds. Backups and the PDF folder stay your own.`
-    : 'Share one business with your partner or colleagues: you all see and edit the same clients, invoices and details, kept in sync within seconds. Create a team and invite them by email.';
+    ? `${(ROLE_HELP[t.team.role] || ROLE_HELP.member)(t.team.name)} Changes show up on each other's screens within seconds. Backups and the PDF folder stay your own.`
+    : 'Share one business with your partner or colleagues, kept in sync within seconds. Create a team, then invite people by email as an admin, an accountant or a team member, each seeing only what their role allows.';
   $('#team-none').hidden = inTeam;
   $('#team-in').hidden = !inTeam;
   if (!inTeam) return;
-  const people = (t.members || []).map(m => `<div class="person"><span>${esc(m.email)}${m.email === t.me ? ' (you)' : ''}</span><small>${esc(ROLE_NAMES[m.role] || m.role)}</small>`
-    + (owner && m.email !== t.me ? `<button class="link warn" type="button" data-team-remove="${esc(m.user_id)}" data-email="${esc(m.email)}">Remove</button>` : '') + '</div>');
-  const pending = (t.invites || []).map(i => `<div class="person"><span>${esc(i.email)}</span><small>Invited</small>
+  const roleSelect = m => `<select data-team-role="${esc(m.user_id)}" data-email="${esc(m.email)}" title="Change what ${esc(m.email)} can see and do">`
+    + Object.entries(ROLE_NAMES).map(([r, n]) => `<option value="${r}"${r === m.role ? ' selected' : ''}>${n}</option>`).join('') + '</select>';
+  const people = (t.members || []).map(m => `<div class="person"><span>${esc(m.email)}${m.email === t.me ? ' (you)' : ''}</span>`
+    + (admin ? roleSelect(m) : `<small>${esc(ROLE_NAMES[m.role] || m.role)}</small>`)
+    + (admin && m.email !== t.me ? `<button class="link warn" type="button" data-team-remove="${esc(m.user_id)}" data-email="${esc(m.email)}">Remove</button>` : '') + '</div>');
+  const pending = (t.invites || []).map(i => `<div class="person"><span>${esc(i.email)}</span><small>Invited as ${esc(ROLE_NAMES[i.role] || 'Team member')}</small>
     <button class="link" type="button" data-team-copy="${esc(i.email)}">Copy invite message</button>
     <button class="link warn" type="button" data-team-cancel="${esc(i.id)}">Cancel</button></div>`);
   $('#team-members').innerHTML = people.concat(pending).join('');
-  $('#team-invite-row').hidden = !owner;
-  $('#team-leave').hidden = owner;
-  $('#team-delete').hidden = !owner;
+  $('#team-invite-row').hidden = !admin;
+  $('#team-delete').hidden = !admin;
 }
 const teamDo = async (fn, ok) => { const r = await fn(); if (r && r.error) { toast(r.error); return null; } renderTeam(r); if (ok) toast(ok); return r; };
 $('#team-notice').onclick = () => store.teamClearNotice && store.teamClearNotice();
@@ -1348,12 +1392,12 @@ $('#team-create').onclick = async () => {
   $('#team-create').disabled = false;
 };
 $('#team-invite').onclick = async () => {
-  const email = $('#team-email').value.trim();
-  const r = await teamDo(() => store.teamInvite(email));
+  const email = $('#team-email').value.trim(), role = $('#team-role').value;
+  const r = await teamDo(() => store.teamInvite(email, role));
   if (!r) return;
   $('#team-email').value = '';
   const msg = inviteMessage(teamState.team.name, email.toLowerCase());
-  toast(`Invited ${email}. Let them know: they sign in to Invaro with that address and click Join.`, 'Copy message', () => navigator.clipboard.writeText(msg).then(() => toast('Invite message copied. Paste it into an email or chat.')));
+  toast(`Invited ${email} as ${aRole(role)}. Let them know: they sign in to Invaro with that address and click Join.`, 'Copy message', () => navigator.clipboard.writeText(msg).then(() => toast('Invite message copied. Paste it into an email or chat.')));
 };
 $('#team-email').onkeydown = e => { if (e.key === 'Enter') $('#team-invite').click(); };
 $('#team-in').onclick = async e => {
@@ -1362,6 +1406,18 @@ $('#team-in').onclick = async e => {
   else if (d.teamCancel) teamDo(() => store.teamCancelInvite(d.teamCancel), 'Invitation cancelled.');
   else if (d.teamRemove && confirm(`Remove ${d.email} from ${teamState.team.name}?\n\nThey can't see or change the team's data any more. The copy already on their computer stays there.`))
     teamDo(() => store.teamRemoveMember(d.teamRemove), `${d.email} was removed.`);
+};
+$('#team-in').onchange = async e => {
+  const d = e.target.dataset;
+  if (!d.teamRole) return;
+  const role = e.target.value, self = d.email === teamState.me;
+  const what = { admin: 'see and change everything, and manage the team', accountant: 'see all clients, invoices and reports, and mark invoices paid, but not change anything else', member: 'make invoices and see only their own, without rates, paid status, reports or the business details' }[role];
+  if (!confirm(`Make ${self ? 'yourself' : d.email} ${aRole(role)}?\n\n${self ? 'You' : 'They'} will ${what}.${self && role !== 'admin' ? "\n\nYou won't be able to change roles any more." : ''}`)) {
+    renderTeam(); return; // puts the old role back in the list
+  }
+  e.target.disabled = true;
+  await teamDo(() => store.teamSetRole(d.teamRole, role), `${self ? 'You are' : `${d.email} is`} now ${aRole(role)}.`);
+  renderTeam();
 };
 $('#team-invited').onclick = async e => {
   const d = e.target.dataset;

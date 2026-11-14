@@ -74,6 +74,7 @@
         <button class="btn" id="cl-new">+ New client</button>
       </div>
       <div id="cl-form">
+        <p class="drive-status" id="cl-locked" hidden></p>
         <label class="check" title="A personal client, and its invoices, stay on your computers only and are never shared with a team."><input type="checkbox" id="cl-private"> Personal client: never share it, or its invoices, with a team</label>
         <label>Company</label><input data-cl="company">
         <label>Contact people</label><input data-cl="contacts" placeholder="Jane Doe | John Doe">
@@ -131,14 +132,36 @@
           <div id="team-members" class="share-list"></div>
           <div class="share-add" id="team-invite-row" style="margin-top:10px">
             <input id="team-email" type="email" placeholder="partner@example.com" autocomplete="off" spellcheck="false">
+            <select id="team-role" title="What they can see and do">
+              <option value="member">Team member</option><option value="accountant">Accountant</option><option value="admin">Admin</option>
+            </select>
             <button class="btn" id="team-invite" type="button">Invite</button>
           </div>
+          <details class="roles">
+            <summary>What can each role see and do?</summary>
+            <table>
+              <thead><tr><th></th><th>Admin</th><th>Accountant</th><th>Team member</th></tr></thead>
+              <tbody>
+                <tr><td>Invoices and quotes they can see</td><td>All</td><td>All</td><td>Only their own</td></tr>
+                <tr><td>Make, change and delete invoices and quotes</td><td>✓</td><td>–</td><td>Their own</td></tr>
+                <tr><td>Mark invoices paid</td><td>✓</td><td>✓</td><td>–</td></tr>
+                <tr><td>Reports</td><td>✓</td><td>✓</td><td>–</td></tr>
+                <tr><td>Add clients, edit contact details</td><td>✓</td><td>–</td><td>✓</td></tr>
+                <tr><td>Change client rates, currency, terms and tax; delete clients</td><td>✓</td><td>–</td><td>–</td></tr>
+                <tr><td>Change business details, banking, design and numbering</td><td>✓</td><td>–</td><td>–</td></tr>
+                <tr><td>Invite people, set roles, remove people</td><td>✓</td><td>–</td><td>–</td></tr>
+              </tbody>
+            </table>
+            <p class="muted">Everyone sees the clients and business details, because they're printed on the invoices. A team always has at least one admin.</p>
+          </details>
           <div class="actions">
             <button class="btn" id="team-leave" type="button">Leave team</button>
             <button class="btn danger" id="team-delete" type="button" hidden>Delete team</button>
           </div>
         </div>
       </div>
+      <p class="drive-status" id="biz-locked" hidden></p>
+      <div id="biz">
       <div class="row">
         <div><label>Your name</label><input data-me="name"></div>
         <div><label>Company name (optional)</label><input data-me="company" placeholder="Leave blank to invoice as yourself"></div>
@@ -213,10 +236,15 @@
         <div><label>Next quote number</label><input data-set="nextQuoteNumber" type="number"></div>
       </div>
       <div class="row">
-        <div><label>Page size</label>
-          <select data-set="pageSize"><option value="letter">Letter</option><option value="a4">A4</option></select></div>
         <div><label>Name for tax on invoices</label>
           <select data-set="taxLabel"><option value="VAT">VAT</option><option value="Tax">Tax</option><option value="GST">GST</option><option value="Sales tax">Sales tax</option></select></div>
+        <div></div>
+      </div>
+      </div><!-- /#biz -->
+      <div class="row">
+        <div><label>Page size</label>
+          <select data-set="pageSize"><option value="letter">Letter</option><option value="a4">A4</option></select></div>
+        <div></div>
       </div>
       <h3>Invoice backup</h3>
       <div class="row">

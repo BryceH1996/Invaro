@@ -161,6 +161,59 @@ const WORDS = {
 };
 const docWords = inv => WORDS[inv && inv.type === 'quote' ? 'quote' : 'invoice'];
 
+// ---------- the Qty column ----------
+// Lines carry their type in "unit" (hours, days, daysoff, item, fixed); older saved invoices don't.
+// When every line with a quantity is hours, the column is called "Hours" (or "Days"), and other
+// lines (fixed amounts) leave it blank. When they're mixed it stays "Qty", with "3 hrs" / "2 days".
+const unitOf = l => l.unit === 'daysoff' ? 'days' : l.unit;
+function qtyColumn(lines) {
+  const units = lines.filter(l => !l.discount && l.unit && l.unit !== 'fixed').map(unitOf);
+  const only = units.length && units.every(u => u === units[0]) ? units[0] : null;
+  const word = only === 'hours' ? 'Hours' : only === 'days' ? 'Days' : 'Qty';
+  const plural = (q, one, many) => `${q} ${Number(q) === 1 ? one : many}`;
+  return {
+    word,
+    cell(it, short) { // short: "12.75 h" for a narrow column
+      if (it.qty === '' || it.qty == null) return '';
+      const u = unitOf(it);
+      if (word !== 'Qty') return u === only ? String(it.qty) : '';
+      if (u === 'hours') return short ? `${it.qty} h` : plural(it.qty, 'hr', 'hrs');
+      if (u === 'days') return short ? `${it.qty} d` : plural(it.qty, 'day', 'days');
+      return String(it.qty);
+    },
+  };
+}
+let QTY = qtyColumn([]); // set for each PDF in buildPdf
+// With inv.hideRates the rates stay off the PDF: no Rate / Price column, and Classic shows "2.5 hrs"
+// rather than "2.5 hrs @ R500.00/hr". Set for each PDF in buildPdf.
+let HIDE_RATES = false;
+const shownDetail = it => !HIDE_RATES ? it.detail : it.brief != null ? it.brief : String(it.detail || '').split(/ @ | × /)[0];
+// The column heading in a template's own style: "QTY" templates get "HOURS", "Qty" ones "Hours".
+const qtyName = styled => styled === styled.toUpperCase() ? QTY.word.toUpperCase() : QTY.word;
+
+// ---------- pages ----------
+// Long invoices carry on over as many pages as they need.
+const PAGE_TOP = 50, PAGE_BOTTOM = 56;
+// Room the totals, banking details and notes need under the table, so they don't run off the page.
+// Totals take up to ~125pt in any design; the banking box is 33pt plus 13pt a row (two columns), and
+// a gap; notes 13–14pt a line. (The footer lines sit in the bottom margin.)
+function tailRoom(me, bank, inv) {
+  const bankN = bankRows(bank, inv).length;
+  const notes = me && me.notes && me.notes.trim() ? me.notes.split('\n').length : 0;
+  return 125 + (bankN ? 33 + Math.ceil(bankN / 2) * 13 + 25 : 0) + notes * 14 + 10;
+}
+// Footer "Page 1 of 3" on every page, when there's more than one.
+function pageNumbers(doc) {
+  const n = doc.getNumberOfPages(); if (n < 2) return;
+  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
+  for (let p = 1; p <= n; p++) {
+    doc.setPage(p);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(140);
+    doc.text(`Page ${p} of ${n}`, W / 2, H - 12, { align: 'center' });
+  }
+  doc.setPage(n);
+}
+
 // opts: { me, c, inv, lines, pageSize, design, logo, taxLabel, bank, bankLogo }
 function buildPdf(opts) {
   // Quotes aren't payable yet, so they leave out the banking details.
@@ -172,7 +225,9 @@ function buildPdf(opts) {
     accent: hexRgb(d.color), second: secondColor(d), customSecond: !!d.color2,
     isDefaultColor: d.color.toLowerCase() === TEMPLATES[d.template].color,
     totals: invoiceTotals(opts.lines, opts.c), taxLabel: opts.taxLabel || 'VAT', cur: opts.c.currency || '' };
+  QTY = qtyColumn(opts.lines); HIDE_RATES = !!(opts.inv && opts.inv.hideRates);
   ({ classic: drawClassic, wave: drawWave, minimal: drawMinimal, bold: drawBold, elegant: drawElegant, sidebar: drawSidebar, corporate: drawCorporate, mono: drawMono, geometric: drawGeometric })[d.template](ctx);
+  pageNumbers(doc);
   return doc;
 }
 
@@ -185,7 +240,7 @@ function textBlock(doc, lines, x, y, step, width, align) {
 }
 
 // ---------- Classic ----------
-function drawClassic({ doc, W, me, c, inv, lines, logo, bank, bankLogo, accent, second, isDefaultColor, totals, taxLabel, cur }) {
+function drawClassic({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, second, isDefaultColor, totals, taxLabel, cur }) {
   const L = (W - 469) / 2, R = L + 469, M = L + 264;
   const DARK = accent;
   const LIGHT = second, INK2 = isLight(LIGHT) ? 0 : 255;
@@ -243,35 +298,56 @@ function drawClassic({ doc, W, me, c, inv, lines, logo, bank, bankLogo, accent, 
   if (co) { doc.text(co, L + 6, y); y += 14; }
   for (const ln of clientIdLines(c)) { doc.text(ln, L + 6, y); y += 14; }
 
-  // table header
+  // table header (again at the top of each new page)
   let t = Math.max(354, y - 2);
-  doc.setFillColor(...DARK); doc.rect(L, t, R - L, 30, 'F');
-  doc.setFontSize(14); doc.setTextColor(ON);
-  doc.text('DESCRIPTION', L + 6, t + 20); doc.text('AMOUNT', R - 6, t + 20, { align: 'right' });
-  t += 30;
+  const head = () => {
+    doc.setFont('helvetica', 'normal'); doc.setFillColor(...DARK); doc.rect(L, t, R - L, 30, 'F');
+    doc.setFontSize(14); doc.setTextColor(ON);
+    doc.text('DESCRIPTION', L + 6, t + 20); doc.text('AMOUNT', R - 6, t + 20, { align: 'right' });
+    t += 30;
+  };
+  head();
 
-  // rows
-  const n = Math.max((totals.tax ? 7 : 8) - (bankRows(bank, inv).length ? 3 : 0), lines.length);
-  for (let i = 0; i < n; i++) {
-    if (i % 2 === 1) { doc.setFillColor(...ROW); doc.rect(L, t, R - L, 30, 'F'); }
-    const it = lines[i];
-    if (it) {
-      doc.setFontSize(11); doc.setTextColor(0);
-      const amtText = money(it.amount, cur);
-      const room = R - L - 24 - doc.getTextWidth(amtText);
-      const dsc = doc.splitTextToSize(it.desc || '', room)[0] || '';
-      doc.text(dsc, L + 6, t + 19);
-      if (it.detail) {
-        const x = L + 6 + doc.getTextWidth(dsc) + 8;
+  // rows: the description wraps and the row grows; the detail (e.g. "3 hrs @ R500/hr") follows on
+  // the last line when it fits, or goes on a line of its own
+  const STEP = 14;
+  const items = lines.map(it => {
+    doc.setFontSize(11);
+    const amtText = money(it.amount, cur);
+    const room = R - L - 24 - doc.getTextWidth(amtText);
+    const text = doc.splitTextToSize(it.desc || '', room);
+    let detail = null;
+    const det = shownDetail(it);
+    if (det) {
+      const lastW = doc.getTextWidth(text[text.length - 1] || '');
+      doc.setFontSize(9);
+      const inline = text.length && (lastW + 8 + doc.getTextWidth(det) <= room);
+      detail = { text: inline ? det : doc.splitTextToSize(det, room)[0], inline, x: inline ? lastW + 8 : 0 };
+    }
+    const n = Math.max(1, text.length) + (detail && !detail.inline ? 1 : 0);
+    return { it, amtText, text, detail, h: 30 + (n - 1) * STEP };
+  });
+  const bottom = H - PAGE_BOTTOM, tail = tailRoom(me, bank, inv);
+  const minRows = (totals.tax ? 7 : 8) - (bankRows(bank, inv).length ? 3 : 0);
+  if (t + items.reduce((s, r) => s + r.h, 0) + Math.max(0, minRows - items.length) * 30 + tail <= bottom)
+    while (items.length < minRows) items.push({ h: 30 }); // empty items, only when it all fits on the page
+  items.forEach((r, i) => {
+    if (t + r.h > bottom && i > 0) { doc.addPage(); t = PAGE_TOP; head(); }
+    if (i % 2 === 1) { doc.setFillColor(...ROW); doc.rect(L, t, R - L, r.h, 'F'); }
+    if (r.it) {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(11); doc.setTextColor(0);
+      r.text.forEach((ln, k) => doc.text(ln, L + 6, t + 19 + k * STEP));
+      if (r.detail) {
+        const dy = t + 19 + (r.detail.inline ? Math.max(0, r.text.length - 1) : r.text.length) * STEP;
         doc.setFontSize(9); doc.setTextColor(110);
-        const det = doc.splitTextToSize(it.detail, Math.max(room - (x - L - 6), 10))[0] || '';
-        doc.text(det, x, t + 19);
+        doc.text(r.detail.text, L + 6 + r.detail.x, dy);
         doc.setFontSize(11); doc.setTextColor(0);
       }
-      doc.text(amtText, R - 6, t + 19, { align: 'right' });
+      doc.text(r.amtText, R - 6, t + 19, { align: 'right' });
     }
-    t += 30;
-  }
+    t += r.h;
+  });
+  if (t + tail > bottom) { doc.addPage(); t = PAGE_TOP; }
 
   // subtotal and tax (only when the client is charged tax), then the total
   t += totals.tax ? 14 : 31;
@@ -314,33 +390,62 @@ function toLines(c) {
   return [c.contacts, ...(c.address || '').split('\n').filter(Boolean), c.phone, ...clientIdLines(c)].filter(Boolean);
 }
 
-// Item table with Description / Qty / Price / Total columns, shared by Wave and Minimal.
-function itemTable(doc, { x, w, y, lines, cur, minRows, rowH, header, font = 'helvetica', fontSize = 10 }) {
-  const cols = header.order.map(k => ({ k, w: w * header.widths[k] }));
+// Item table with Description / Qty / Price / Total columns, shared by every template but Classic.
+// Long descriptions wrap onto more lines and the row grows to fit (header.row gets each row's height).
+// When the page is full the table carries on at the top of a new page, under its header again
+// (header.page, if given, first redraws the page's background). Empty filler rows are only added
+// when everything fits on one page. Returns the y under the table, on a new page when the totals
+// and the rest (tail) wouldn't fit under it.
+function itemTable(doc, { x, w, y, lines, cur, minRows, rowH, header, font = 'helvetica', fontSize = 10, tail = 0 }) {
+  const H = doc.internal.pageSize.getHeight(), bottom = H - PAGE_BOTTOM;
+  // Without rates, the Rate / Price column goes and the description gets its room.
+  const order = HIDE_RATES ? header.order.filter(k => k !== 'price') : header.order;
+  const cols = order.map(k => ({ k, w: w * (header.widths[k] + (HIDE_RATES && k === 'desc' ? header.widths.price : 0)) }));
   let cx = x; cols.forEach(col => { col.x = cx; cx += col.w; });
+  const desc = cols.find(col => col.k === 'desc');
+  const step = fontSize * 1.2;
+  doc.setFont(font, 'normal'); doc.setFontSize(fontSize);
+  const rows = lines.map(it => {
+    const text = doc.splitTextToSize(it.desc || '', desc.w - 14);
+    return { it, text, h: rowH + Math.max(0, text.length - 1) * step };
+  });
+  const used = rows.reduce((s, r) => s + r.h, 0);
+  const fillers = y + header.h + used + Math.max(0, minRows - rows.length) * rowH + tail <= bottom ? Math.max(0, minRows - rows.length) : 0;
+  for (let k = 0; k < fillers; k++) rows.push({ h: rowH });
+  const newPage = () => {
+    doc.addPage(); y = PAGE_TOP;
+    if (header.page) header.page();
+    header.draw(cols, y); y += header.h;
+  };
   header.draw(cols, y);
   y += header.h;
-  const n = Math.max(minRows, lines.length);
-  for (let i = 0; i < n; i++) {
-    header.row(cols, y, i);
-    const it = lines[i];
-    if (it) {
+  rows.forEach((r, i) => {
+    if (y + r.h > bottom && i > 0) newPage();
+    header.row(cols, y, i, r.h);
+    if (r.it) {
+      const it = r.it;
       doc.setFont(font, 'normal'); doc.setFontSize(fontSize); doc.setTextColor(60);
-      const qty = it.qty === '' || it.qty == null ? '' : String(it.qty);
       const price = it.price === '' || it.price == null ? '' : money(it.price, cur);
+      const ty = y + rowH / 2 + 3.5; // first line; the numbers line up with it
       for (const col of cols) {
-        const ty = y + rowH / 2 + 3.5;
-        if (col.k === 'desc') {
-          const text = doc.splitTextToSize(it.desc || '', col.w - 14)[0] || '';
-          doc.text(text, col.x + 7, ty);
-        } else {
-          const v = { qty, price, total: money(it.amount, cur) }[col.k];
+        if (col.k === 'desc') r.text.forEach((ln, k) => doc.text(ln, col.x + 7, ty + k * step));
+        else {
+          let v = { qty: QTY.cell(it), price, total: money(it.amount, cur) }[col.k];
+          // A quantity like "12.75 hrs" shrinks a little to fit its column, or becomes "12.75 h".
+          const fit = col.w - 10;
+          if (col.k === 'qty' && doc.getTextWidth(v) > fit) {
+            let size = fontSize;
+            while (size > 7.5 && doc.setFontSize(size).getTextWidth(v) > fit) size -= 0.5;
+            if (doc.getTextWidth(v) > fit) { doc.setFontSize(fontSize); v = QTY.cell(it, true); }
+          }
           doc.text(v, header.align === 'center' ? col.x + col.w / 2 : col.x + col.w - 7, ty, { align: header.align === 'center' ? 'center' : 'right' });
+          doc.setFontSize(fontSize);
         }
       }
     }
-    y += rowH;
-  }
+    y += r.h;
+  });
+  if (tail && y + tail > bottom) { doc.addPage(); y = PAGE_TOP; if (header.page) header.page(); }
   return y;
 }
 
@@ -386,19 +491,19 @@ function drawWave({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, 
 
   // table
   const grid = [150, 150, 150];
-  y = itemTable(doc, { x: L, w: R - L, y, lines, cur, minRows: bankRows(bank, inv).length ? 4 : 6, rowH: 24,
+  y = itemTable(doc, { tail: tailRoom(me, bank, inv), x: L, w: R - L, y, lines, cur, minRows: bankRows(bank, inv).length ? 4 : 6, rowH: 24,
     header: {
       h: 24, align: 'center', order: ['desc', 'qty', 'price', 'total'], widths: { desc: 0.44, qty: 0.12, price: 0.22, total: 0.22 },
       draw(cols, y0) {
         doc.setFillColor(...accent); doc.rect(L, y0, R - L, 24, 'F');
         doc.setFont('helvetica', 'normal'); doc.setFontSize(11); doc.setTextColor(ON);
-        const names = { desc: 'Description', qty: 'Qty', price: 'Price', total: 'Total' };
+        const names = { desc: 'Description', qty: qtyName('Qty'), price: 'Price', total: 'Total' };
         for (const col of cols) doc.text(names[col.k], col.x + col.w / 2, y0 + 16, { align: 'center' });
       },
-      row(cols, y0) {
+      row(cols, y0, i, h = 24) {
         doc.setDrawColor(...grid); doc.setLineWidth(0.6);
-        doc.rect(L, y0, R - L, 24);
-        for (const col of cols.slice(1)) doc.line(col.x, y0, col.x, y0 + 24);
+        doc.rect(L, y0, R - L, h);
+        for (const col of cols.slice(1)) doc.line(col.x, y0, col.x, y0 + h);
       },
     } });
 
@@ -461,13 +566,13 @@ function drawMinimal({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accen
   let y = Math.max(ya, yb, y0 + 48) + 24;
 
   // table
-  y = itemTable(doc, { x: L, w: R - L, y, lines, cur, minRows: 6, rowH: 26,
+  y = itemTable(doc, { tail: tailRoom(me, bank, inv), x: L, w: R - L, y, lines, cur, minRows: 6, rowH: 26,
     header: {
       h: 30, align: 'right', order: ['desc', 'price', 'qty', 'total'], widths: { desc: 0.52, price: 0.18, qty: 0.12, total: 0.18 },
       draw(cols, y1) {
         doc.setFillColor(...band); doc.rect(L, y1, R - L, 30, 'F');
         doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5); doc.setTextColor(20);
-        const names = { desc: 'Description', price: 'Price', qty: 'QTY', total: 'Total' };
+        const names = { desc: 'Description', price: 'Price', qty: qtyName('QTY'), total: 'Total' };
         for (const col of cols) {
           if (col.k === 'desc') doc.text(names[col.k], col.x + 7, y1 + 19);
           else doc.text(names[col.k], col.x + col.w - 7, y1 + 19, { align: 'right' });
@@ -576,16 +681,16 @@ function drawBold({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, 
   let y = Math.max(y1, y2, by + 104) + 16;
 
   // items
-  y = itemTable(doc, { x: L, w: R - L, y, lines, cur, minRows: hasBank ? 3 : 5, rowH: 24,
+  y = itemTable(doc, { tail: tailRoom(me, bank, inv), x: L, w: R - L, y, lines, cur, minRows: hasBank ? 3 : 5, rowH: 24,
     header: {
       h: 26, align: 'right', order: ['desc', 'qty', 'price', 'total'], widths: { desc: 0.52, qty: 0.1, price: 0.19, total: 0.19 },
       draw(cols, y0) {
         doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...accent);
-        const names = { desc: 'DESCRIPTION', qty: 'QTY', price: 'RATE', total: 'AMOUNT' };
+        const names = { desc: 'DESCRIPTION', qty: qtyName('QTY'), price: 'RATE', total: 'AMOUNT' };
         for (const col of cols) col.k === 'desc' ? doc.text(names.desc, col.x + 7, y0 + 16) : doc.text(names[col.k], col.x + col.w - 7, y0 + 16, { align: 'right' });
         doc.setDrawColor(...DARK); doc.setLineWidth(1.4); doc.line(L, y0 + 25, R, y0 + 25);
       },
-      row(cols, y0) { doc.setDrawColor(228); doc.setLineWidth(0.6); doc.line(L, y0 + 24, R, y0 + 24); },
+      row(cols, y0, i, h = 24) { doc.setDrawColor(228); doc.setLineWidth(0.6); doc.line(L, y0 + h, R, y0 + h); },
     } });
 
   // totals, then a dark total bar
@@ -650,13 +755,13 @@ function drawElegant({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accen
   y = Math.max(yl, yr) + 20;
 
   // items
-  y = itemTable(doc, { x: L, w: R - L, y, lines, cur, minRows: hasBank ? 3 : 5, rowH: 24, font: 'times', fontSize: 11,
+  y = itemTable(doc, { tail: tailRoom(me, bank, inv), x: L, w: R - L, y, lines, cur, minRows: hasBank ? 3 : 5, rowH: 24, font: 'times', fontSize: 11,
     header: {
       h: 26, align: 'right', order: ['desc', 'qty', 'price', 'total'], widths: { desc: 0.54, qty: 0.1, price: 0.18, total: 0.18 },
       draw(cols, y0) {
         doc.setDrawColor(...accent); doc.setLineWidth(0.8); doc.line(L, y0, R, y0); doc.line(L, y0 + 26, R, y0 + 26);
         doc.setFont('times', 'bold'); doc.setFontSize(11); doc.setTextColor(...INK);
-        const names = { desc: 'Description', qty: 'Qty', price: 'Rate', total: 'Amount' };
+        const names = { desc: 'Description', qty: qtyName('Qty'), price: 'Rate', total: 'Amount' };
         for (const col of cols) col.k === 'desc' ? doc.text(names.desc, col.x + 7, y0 + 17) : doc.text(names[col.k], col.x + col.w - 7, y0 + 17, { align: 'right' });
       },
       row() {},
@@ -733,16 +838,17 @@ function drawSidebar({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accen
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(95);
   y = textBlock(doc, toLines(c), mx, y + 2, 13, MR - mx) + 26;
 
-  y = itemTable(doc, { x: mx, w: MR - mx, y, lines, cur, minRows: 5, rowH: 26,
+  y = itemTable(doc, { tail: tailRoom(me, bank, inv), x: mx, w: MR - mx, y, lines, cur, minRows: 5, rowH: 26,
     header: {
       h: 28, align: 'right', order: ['desc', 'qty', 'price', 'total'], widths: { desc: 0.46, qty: 0.12, price: 0.21, total: 0.21 },
       draw(cols, y0) {
         doc.setFillColor(...tint(accent, 0.88)); doc.rect(mx, y0, MR - mx, 28, 'F');
         doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...shade(accent, 0.3));
-        const names = { desc: 'DESCRIPTION', qty: 'QTY', price: 'RATE', total: 'AMOUNT' };
+        const names = { desc: 'DESCRIPTION', qty: qtyName('QTY'), price: 'RATE', total: 'AMOUNT' };
         for (const col of cols) col.k === 'desc' ? doc.text(names.desc, col.x + 7, y0 + 18) : doc.text(names[col.k], col.x + col.w - 7, y0 + 18, { align: 'right' });
       },
-      row(cols, y0) { doc.setDrawColor(232); doc.setLineWidth(0.6); doc.line(mx, y0 + 26, MR, y0 + 26); },
+      row(cols, y0, i, h = 26) { doc.setDrawColor(232); doc.setLineWidth(0.6); doc.line(mx, y0 + h, MR, y0 + h); },
+      page() { doc.setFillColor(...accent); doc.rect(0, 0, SW, H, 'F'); }, // the sidebar on every page
     } });
 
   const tx = MR - 200;
@@ -801,16 +907,17 @@ function drawCorporate({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, acc
   y += ch + 24;
 
   // items: coloured header, striped rows
-  y = itemTable(doc, { x: L, w: R - L, y, lines, cur, minRows: hasBank ? 3 : 5, rowH: 24,
+  y = itemTable(doc, { tail: tailRoom(me, bank, inv), x: L, w: R - L, y, lines, cur, minRows: hasBank ? 3 : 5, rowH: 24,
     header: {
       h: 26, align: 'right', order: ['desc', 'qty', 'price', 'total'], widths: { desc: 0.5, qty: 0.12, price: 0.19, total: 0.19 },
       draw(cols, y0) {
         doc.setFillColor(...accent); doc.rect(L, y0, R - L, 26, 'F');
         doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(isLight(accent) ? 20 : 255);
-        const names = { desc: 'DESCRIPTION', qty: 'QTY', price: 'RATE', total: 'AMOUNT' };
+        const names = { desc: 'DESCRIPTION', qty: qtyName('QTY'), price: 'RATE', total: 'AMOUNT' };
         for (const col of cols) col.k === 'desc' ? doc.text(names.desc, col.x + 8, y0 + 17) : doc.text(names[col.k], col.x + col.w - 8, y0 + 17, { align: 'right' });
       },
-      row(cols, y0, i) { if (i % 2) { doc.setFillColor(...GREY); doc.rect(L, y0, R - L, 24, 'F'); } },
+      row(cols, y0, i, h = 24) { if (i % 2) { doc.setFillColor(...GREY); doc.rect(L, y0, R - L, h, 'F'); } },
+      page() { doc.setFillColor(...accent); doc.rect(0, 0, W, 8, 'F'); }, // the colour band on every page
     } });
 
   // totals card
@@ -866,12 +973,12 @@ function drawMono({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, accent, 
   doc.setFont('courier', 'normal'); doc.setFontSize(10);
   y = textBlock(doc, [c.company || '', ...toLines(c)], L, y + 15, 12.5, R - L) + 14;
 
-  y = itemTable(doc, { x: L, w: R - L, y, lines, cur, minRows: hasBank ? 2 : 4, rowH: 21, font: 'courier', fontSize: 10,
+  y = itemTable(doc, { tail: tailRoom(me, bank, inv), x: L, w: R - L, y, lines, cur, minRows: hasBank ? 2 : 4, rowH: 21, font: 'courier', fontSize: 10,
     header: {
       h: 22, align: 'right', order: ['desc', 'qty', 'price', 'total'], widths: { desc: 0.5, qty: 0.1, price: 0.2, total: 0.2 },
       draw(cols, y0) {
         doc.setFont('courier', 'bold'); doc.setFontSize(10); doc.setTextColor(...INK);
-        const names = { desc: 'ITEM', qty: 'QTY', price: 'RATE', total: 'AMOUNT' };
+        const names = { desc: 'ITEM', qty: qtyName('QTY'), price: 'RATE', total: 'AMOUNT' };
         for (const col of cols) col.k === 'desc' ? doc.text(names.desc, col.x + 7, y0 + 13) : doc.text(names[col.k], col.x + col.w - 7, y0 + 13, { align: 'right' });
         dashed(y0 + 20);
       },
@@ -934,16 +1041,16 @@ function drawGeometric({ doc, W, H, me, c, inv, lines, logo, bank, bankLogo, acc
   };
   y = Math.max(block('BILLED TO', c.company || '', toLines(c), L), block('FROM', me.company || me.name || '', fromLines(me), L + colW)) + 22;
 
-  y = itemTable(doc, { x: L, w: R - L, y, lines, cur, minRows: hasBank ? 3 : 5, rowH: 25,
+  y = itemTable(doc, { tail: tailRoom(me, bank, inv), x: L, w: R - L, y, lines, cur, minRows: hasBank ? 3 : 5, rowH: 25,
     header: {
       h: 26, align: 'right', order: ['desc', 'qty', 'price', 'total'], widths: { desc: 0.5, qty: 0.12, price: 0.19, total: 0.19 },
       draw(cols, y0) {
         doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...shade(accent, 0.2));
-        const names = { desc: 'Description', qty: 'Qty', price: 'Rate', total: 'Amount' };
+        const names = { desc: 'Description', qty: qtyName('Qty'), price: 'Rate', total: 'Amount' };
         for (const col of cols) col.k === 'desc' ? doc.text(names.desc, col.x + 4, y0 + 15) : doc.text(names[col.k], col.x + col.w - 4, y0 + 15, { align: 'right' });
         doc.setDrawColor(...accent); doc.setLineWidth(2); doc.line(L, y0 + 23, R, y0 + 23);
       },
-      row(cols, y0) { doc.setDrawColor(230); doc.setLineWidth(0.6); doc.line(L, y0 + 25, R, y0 + 25); },
+      row(cols, y0, i, h = 25) { doc.setDrawColor(230); doc.setLineWidth(0.6); doc.line(L, y0 + h, R, y0 + h); },
     } });
 
   const tx = R - 220;

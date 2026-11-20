@@ -36,8 +36,11 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 
 ### Invoicing
 - **Saved clients:** each client keeps its address, payment terms, currency (GBP, USD, EUR or ZAR), hourly rate, daily rate and day-off reduction.
-- **Priced for you:** add lines as days, hours, days off or fixed amounts, and the total is worked out from the client's rates. Set a tax rate for a client to add a VAT line.
+- **Priced for you:** add lines as days, hours, days off, items (a quantity at a price each) or fixed amounts, and the total is worked out from the client's rates. Set a tax rate for a client to add a VAT line.
+- **As many lines as you need:** long descriptions wrap, and a long invoice carries on over more pages with the table header repeated and "Page 1 of 3" at the bottom. When every line is hours, the Qty column says Hours.
+- **Show or hide rates:** untick **Show rates on the PDF** to leave your hourly, daily and unit rates off an invoice or quote, showing just the quantities and amounts. New ones start the way you last chose.
 - **Discounts:** click **%** beside any line to take a percentage or a whole amount off it. The saving shows as its own line under it, and comes off before the total and VAT.
+- **Discount on the whole invoice:** tick **Discount on the whole invoice**, then type a percentage and a reason (e.g. "Loyal customer"). It shows as the last line, with the amount it was taken from, before VAT.
 - **Live preview:** the PDF updates as you type. Zoom with − / +, or Ctrl (⌘ on a Mac) with + / − / 0.
 - **A folder per client:** **Save invoice** puts the PDF straight into that client's folder, e.g. `Documents/Invaro/Northwind Design Co/Northwind Design Co. Invoice - November 2026 - Alex Morgan.pdf`.
 - **Numbering:** invoice numbers carry on from the last one you saved, and never clash in a team.

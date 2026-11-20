@@ -70,6 +70,17 @@ function lineDetail(it, c) {
   if (it.kind === 'item') return `${q} × ${money(it.price, cur)}`;
   return '';
 }
+// All the lines of an invoice or quote: its priced lines, then any discount on the whole invoice
+// (inv.discount = { pct, reason }) as a last line, a percentage of everything above it, before tax.
+function docLines(inv, c) {
+  const lines = priced(inv.items || [], c);
+  const d = inv.discount || {}, pct = Math.min(100, num(d.pct));
+  const base = round2(lines.reduce((s, l) => s + num(l.amount), 0));
+  const saving = pct > 0 && base > 0 ? round2(base * pct / 100) : 0;
+  if (saving) lines.push({ desc: `Discount (${pct}%)${d.reason ? ': ' + d.reason : ''}`, detail: `on ${money(base, c.currency)}`,
+    qty: '', price: '', amount: -saving, discount: true, whole: true });
+  return lines;
+}
 // A line can have a discount: a percentage of the line (disc 'pct') or a whole amount ('amt').
 // Returns the saving as a positive number, never more than the line itself.
 function lineDiscount(it, c) {
@@ -78,6 +89,11 @@ function lineDiscount(it, c) {
   return Math.min(base, round2(it.disc === 'pct' ? base * Math.min(v, 100) / 100 : v));
 }
 const discLabel = it => it.disc === 'pct' ? `Discount (${num(it.discValue)}%)` : 'Discount';
+// The detail without the rate, for when rates are hidden: "2.5 hrs", "3 days", "Qty 4".
+function lineBrief(it) {
+  const q = num(it.qty), s = (one, many) => `${q} ${q === 1 ? one : many}`;
+  return { hours: s('hr', 'hrs'), days: s('day', 'days'), daysoff: s('day', 'days'), item: `Qty ${q}` }[it.kind] || '';
+}
 // Lines as they appear on the PDF (zero-value lines dropped). A discount is a line of its own straight
 // under the line it's for, showing the saving, so the total is worked out after it's taken off.
 // qty and price feed the templates with Qty / Price columns (days off show a negative price; a discount none).
@@ -87,7 +103,7 @@ function priced(items, c) {
     if (amount === 0) return [];
     const fixed = it.kind === 'fixed';
     const price = fixed ? amount : it.kind === 'item' ? num(it.price) : (it.kind === 'daysoff' ? -1 : 1) * rateFor(it.kind, c);
-    const out = [{ desc: it.desc, detail: lineDetail(it, c), qty: fixed ? 1 : num(it.qty), price, amount }];
+    const out = [{ desc: it.desc, detail: lineDetail(it, c), brief: lineBrief(it), qty: fixed ? 1 : num(it.qty), price, amount, unit: it.kind }];
     const saving = lineDiscount(it, c);
     if (saving) out.push({ desc: discLabel(it), detail: it.desc ? `on ${it.desc}` : '', qty: '', price: '', amount: -saving, discount: true });
     return out;
@@ -291,6 +307,7 @@ function newDraft(clientId, type = 'invoice') {
     type, clientId: c ? c.id : null, number: nextInvoiceNumber(type), private: !!(c && c.private),
     date: today, due: type === 'quote' ? addDays(today, 30) : c ? addDays(today, c.dueDays) : today, period: today.slice(0, 7),
     items: c && c.items && c.items.length ? clone(c.items).map(normItem) : [normItem({ kind: 'fixed' })],
+    hideRates: !!settings.hideRates, // as you last chose
   };
 }
 
@@ -335,7 +352,7 @@ function refreshPreview(delay = 250) {
   previewTimer = setTimeout(() => {
     const c = client(draft.clientId);
     if (!c) { $('#preview').removeAttribute('src'); return; }
-    const doc = buildPdf(pdfOptions({ me: settings.me || {}, c, inv: draft, lines: priced(draft.items, c), pageSize: settings.pageSize, design: settings.design }));
+    const doc = buildPdf(pdfOptions({ me: settings.me || {}, c, inv: draft, lines: docLines(draft, c), pageSize: settings.pageSize, design: settings.design }));
     const url = doc.output('bloburl');
     $('#preview').src = `${url}#${previewView()}&toolbar=0&navpanes=0`;
     if (previewUrl) setTimeout(URL.revokeObjectURL.bind(URL, previewUrl), 2000);
@@ -372,15 +389,19 @@ function renderInvoice() {
   $('#inv-private-label').textContent = teamState.team ? `Personal: don't share this with ${teamState.team.name}` : "Personal: don't share this with a team";
   $('#inv-number').value = draft.number; $('#inv-period').value = draft.period;
   $('#inv-date').value = draft.date; $('#inv-due').value = draft.due;
+  $('#inv-show-rates').checked = !draft.hideRates;
+  $('#inv-disc-on').nextSibling.textContent = quote ? ' Discount on the whole quote' : ' Discount on the whole invoice';
+  renderWholeDiscount();
   renderItems();
 }
 // Switching between invoice and quote keeps the client and lines, with the right number and dates.
 $('#doc-type').onclick = e => {
   const type = e.target.dataset.type;
   if (!type || type === (draft.type || 'invoice')) return;
-  const items = draft.items, period = draft.period;
+  const items = draft.items, period = draft.period, discount = draft.discount;
   const priv = draft.private;
   draft = newDraft(draft.clientId, type); draft.items = items; draft.period = period; draft.private = priv;
+  if (discount) draft.discount = discount;
   renderInvoice(); changed();
 };
 function renderItems() {
@@ -391,7 +412,9 @@ function renderItems() {
     const kind = document.createElement('select');
     kind.innerHTML = Object.entries(KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
     kind.value = it.kind;
-    const desc = document.createElement('input'); desc.value = it.desc; desc.placeholder = 'e.g. Frontend Development';
+    // The description wraps and grows as you type, so a long one stays readable.
+    const desc = document.createElement('textarea'); desc.rows = 1; desc.className = 'desc'; desc.value = it.desc; desc.placeholder = 'e.g. Frontend Development';
+    const grow = () => { desc.style.height = 'auto'; desc.style.height = desc.scrollHeight + 2 + 'px'; };
     const qty = document.createElement('input'); qty.type = 'number'; qty.step = '0.25'; qty.min = '0'; qty.value = it.qty;
     const amt = document.createElement('input'); amt.type = 'number'; amt.step = '0.01';
     const x = document.createElement('button'); x.className = 'x'; x.textContent = '×'; x.title = 'Remove line';
@@ -439,7 +462,7 @@ function renderItems() {
       if (!['fixed', 'item'].includes(it.kind) && !rateFor(it.kind, c)) toast(`${c.company || 'This client'} has no ${KINDS[it.kind].toLowerCase()} rate set`);
       sync(); changed();
     };
-    desc.oninput = () => { it.desc = desc.value; changed(); };
+    desc.oninput = () => { it.desc = desc.value; grow(); changed(); };
     qty.oninput = () => { it.qty = parseFloat(qty.value) || 0; sync(); changed(); };
     amt.oninput = () => {
       if (it.kind === 'fixed') it.amount = parseFloat(amt.value) || 0;
@@ -450,16 +473,37 @@ function renderItems() {
     x.onclick = () => { draft.items.splice(i, 1); renderItems(); changed(); };
     sync();
     box.append(kind, desc, qty, amt, pct, x);
+    requestAnimationFrame(grow); // once it's on screen and has a width
     if (disc) box.append(disc);
   });
   updateTotal();
 }
 function updateTotal() {
   const c = client(draft.clientId) || {};
-  const t = invoiceTotals(priced(draft.items, c), c);
+  const lines = docLines(draft, c), t = invoiceTotals(lines, c);
   $('#inv-total').textContent = money(t.total, c.currency) + (t.tax ? ` (incl. ${settings.taxLabel || 'VAT'} ${money(t.tax, c.currency)})` : '');
+  const whole = lines.find(l => l.whole);
+  $('#inv-disc-saving').textContent = whole ? `Saving ${money(-whole.amount, c.currency)} ${whole.detail}, before ${settings.taxLabel || 'VAT'}` : 'Type a percentage to see the saving.';
 }
 function changed() { settings.draft = draft; persist('settings'); updateTotal(); refreshPreview(); }
+
+// Show or hide the rates on this PDF; new invoices and quotes start the way you last chose.
+$('#inv-show-rates').onchange = e => { draft.hideRates = !e.target.checked; settings.hideRates = draft.hideRates; changed(); };
+
+// ---------- discount on the whole invoice ----------
+function renderWholeDiscount() {
+  const d = draft.discount;
+  $('#inv-disc-on').checked = !!d; $('#inv-disc').hidden = !d;
+  setVal($('#inv-disc-pct'), d && d.pct ? d.pct : '');
+  setVal($('#inv-disc-reason'), d ? d.reason || '' : '');
+}
+$('#inv-disc-on').onchange = e => {
+  if (e.target.checked) draft.discount = { pct: 0, reason: '' }; else delete draft.discount;
+  renderWholeDiscount(); changed();
+  if (e.target.checked) $('#inv-disc-pct').focus();
+};
+$('#inv-disc-pct').oninput = e => { (draft.discount ||= { reason: '' }).pct = Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)); changed(); };
+$('#inv-disc-reason').oninput = e => { (draft.discount ||= { pct: 0 }).reason = e.target.value; changed(); };
 
 $('#inv-client').onchange = e => {
   const keep = draft.number;
@@ -561,7 +605,7 @@ $('#download').onclick = async () => {
   if (!c) return toast('Add a client first');
   const entry = {
     id: uid(), savedAt: new Date().toISOString(), pageSize: settings.pageSize,
-    inv: clone(draft), c: clone(c), me: clone(settings.me || {}), lines: priced(draft.items, c),
+    inv: clone(draft), c: clone(c), me: clone(settings.me || {}), lines: docLines(draft, c),
     design: clone(designNow()), taxLabel: settings.taxLabel || 'VAT', bank: clone(settings.bank || {}),
   };
   const t = invoiceTotals(entry.lines, entry.c);
@@ -1061,15 +1105,16 @@ $('#rep-csv').onclick = () => {
 // A discount line isn't a step of its own: it comes off the line above it.
 const stepPaid = (h, i) => (h.paidSteps || {})[i] || null;
 const stepIdx = lines => (lines || []).map((l, i) => l.discount ? -1 : i).filter(i => i >= 0);
-function stepNet(lines, i) { // the line plus the discount lines straight under it
+function stepNet(lines, i) { // the line plus its own discount straight under it
   let n = num(lines[i].amount);
-  for (let k = i + 1; k < lines.length && lines[k].discount; k++) n += num(lines[k].amount);
+  for (let k = i + 1; k < lines.length && lines[k].discount && !lines[k].whole; k++) n += num(lines[k].amount);
   return round2(n);
 }
 function stepSummary(h) {
   const lines = h.lines || [], idx = stepIdx(lines);
-  const subtotal = lines.reduce((s, l) => s + num(l.amount), 0);
-  const factor = subtotal ? num(h.total) / subtotal : 1; // step amounts include tax, like the total
+  // Scaling the steps to the total spreads tax, and any discount on the whole quote, across every step.
+  const steps = idx.reduce((s, i) => s + stepNet(lines, i), 0);
+  const factor = steps ? num(h.total) / steps : 1;
   const paidIdx = idx.filter(i => stepPaid(h, i));
   const paid = round2(paidIdx.reduce((s, i) => s + stepNet(lines, i) * factor, 0));
   return { count: idx.length, paidCount: paidIdx.length, factor, paid, outstanding: round2(num(h.total) - paid) };
@@ -1120,7 +1165,11 @@ function stepsRow(h) {
   return `<tr class="steps-row"><td colspan="7"><div class="steps">
     ${rows}
     <div class="steps-sum"><span>Paid <b>${esc(money(s.paid, cur))}</b> of ${esc(money(h.total, cur))} · Outstanding <b>${esc(money(s.outstanding, cur))}</b></span>${all}</div>
-    ${h.tax ? `<p class="muted">Amounts include ${esc(h.taxLabel || 'VAT')}.</p>` : ''}
+    ${(() => {
+      const whole = lines.find(l => l.whole);
+      const notes = [h.tax && `include ${h.taxLabel || 'VAT'}`, whole && `take off the ${whole.desc.replace(/^Discount \((.*?)\).*/, '$1')} discount on the whole quote`].filter(Boolean);
+      return notes.length ? `<p class="muted">Amounts ${esc(notes.join(' and '))}.</p>` : '';
+    })()}
   </div></td></tr>`;
 }
 
@@ -1213,6 +1262,8 @@ $('#hist').onclick = async e => {
     // A new invoice for the quote's client, with its lines; the quote remembers which invoice it became.
     draft = newDraft(client(h.c.id) ? h.c.id : undefined, 'invoice');
     draft.items = clone(h.inv.items).map(normItem);
+    if (h.inv.discount) draft.discount = clone(h.inv.discount);
+    draft.hideRates = !!h.inv.hideRates;
     h.convertedTo = draft.number; persist('invoices'); renderHistory();
     renderInvoice(); changed(); go('invoice');
     toast(`Started ${draft.number} from quote ${h.inv.number}. Check it and click Save invoice.`);
@@ -1227,6 +1278,8 @@ $('#hist').onclick = async e => {
   } else if (act === 'copy') {
     draft = newDraft(client(h.c.id) ? h.c.id : undefined);
     draft.items = clone(h.inv.items).map(normItem);
+    if (h.inv.discount) draft.discount = clone(h.inv.discount);
+    draft.hideRates = !!h.inv.hideRates;
     renderInvoice(); changed(); go('invoice');
   } else if (act === 'del' && confirm(`Remove ${h.inv.number} from history${teamState.team && !h.private ? ` for everyone in ${teamState.team.name}` : ''}? (PDF files are not deleted.)`)) {
     invoices = invoices.filter(x => x.id !== id); persist('invoices'); renderHistory();

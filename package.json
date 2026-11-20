@@ -1,7 +1,7 @@
 {
   "name": "invaro",
   "productName": "Invaro",
-  "version": "1.19.0",
+  "version": "1.20.0",
   "description": "Desktop invoicing app: saved clients, rates, and PDF invoices.",
   "author": "Invaro",
   "main": "main.js",

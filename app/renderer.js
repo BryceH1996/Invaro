@@ -70,15 +70,28 @@ function lineDetail(it, c) {
   if (it.kind === 'item') return `${q} × ${money(it.price, cur)}`;
   return '';
 }
-// Lines as they appear on the PDF (zero-value lines dropped).
-// qty and price feed the templates with Qty / Price columns (days off show a negative price).
+// A line can have a discount: a percentage of the line (disc 'pct') or a whole amount ('amt').
+// Returns the saving as a positive number, never more than the line itself.
+function lineDiscount(it, c) {
+  const base = lineAmount(it, c), v = num(it.discValue);
+  if (!it.disc || v <= 0 || base <= 0) return 0;
+  return Math.min(base, round2(it.disc === 'pct' ? base * Math.min(v, 100) / 100 : v));
+}
+const discLabel = it => it.disc === 'pct' ? `Discount (${num(it.discValue)}%)` : 'Discount';
+// Lines as they appear on the PDF (zero-value lines dropped). A discount is a line of its own straight
+// under the line it's for, showing the saving, so the total is worked out after it's taken off.
+// qty and price feed the templates with Qty / Price columns (days off show a negative price; a discount none).
 function priced(items, c) {
-  return items.map(it => {
+  return items.flatMap(it => {
     const amount = lineAmount(it, c);
+    if (amount === 0) return [];
     const fixed = it.kind === 'fixed';
     const price = fixed ? amount : it.kind === 'item' ? num(it.price) : (it.kind === 'daysoff' ? -1 : 1) * rateFor(it.kind, c);
-    return { desc: it.desc, detail: lineDetail(it, c), qty: fixed ? 1 : num(it.qty), price, amount };
-  }).filter(l => l.amount !== 0);
+    const out = [{ desc: it.desc, detail: lineDetail(it, c), qty: fixed ? 1 : num(it.qty), price, amount }];
+    const saving = lineDiscount(it, c);
+    if (saving) out.push({ desc: discLabel(it), detail: it.desc ? `on ${it.desc}` : '', qty: '', price: '', amount: -saving, discount: true });
+    return out;
+  });
 }
 
 // ---------- invoice design (template, colour, logo) ----------
@@ -252,7 +265,8 @@ $('#logo-remove').onclick = async () => {
   await store.removeLogo(); logo = null; settings.logo = ''; persist('settings');
   renderDesign(); refreshPreview(0);
 };
-const normItem = it => ({ kind: KINDS[it.kind] ? it.kind : 'fixed', desc: it.desc || '', qty: it.qty ?? 1, amount: it.amount ?? 0, price: it.price ?? 0 });
+const normItem = it => ({ kind: KINDS[it.kind] ? it.kind : 'fixed', desc: it.desc || '', qty: it.qty ?? 1, amount: it.amount ?? 0, price: it.price ?? 0,
+  disc: ['pct', 'amt'].includes(it.disc) ? it.disc : '', discValue: it.discValue ?? 0 });
 
 // ---------- drafts ----------
 const client = id => clients.find(c => c.id === id);
@@ -371,7 +385,7 @@ $('#doc-type').onclick = e => {
 };
 function renderItems() {
   const box = $('#inv-items');
-  box.innerHTML = '<div class="hd">Type</div><div class="hd">Description</div><div class="hd">Qty</div><div class="hd">Amount</div><div></div>';
+  box.innerHTML = '<div class="hd">Type</div><div class="hd">Description</div><div class="hd">Qty</div><div class="hd">Amount</div><div></div><div></div>';
   const c = client(draft.clientId) || {};
   draft.items.forEach((it, i) => {
     const kind = document.createElement('select');
@@ -381,8 +395,33 @@ function renderItems() {
     const qty = document.createElement('input'); qty.type = 'number'; qty.step = '0.25'; qty.min = '0'; qty.value = it.qty;
     const amt = document.createElement('input'); amt.type = 'number'; amt.step = '0.01';
     const x = document.createElement('button'); x.className = 'x'; x.textContent = '×'; x.title = 'Remove line';
+    const pct = document.createElement('button'); pct.className = 'disc-btn'; pct.textContent = '%';
+    // The line's discount, in a row of its own under it: a value, % or a whole amount, and the saving.
+    let disc = null;
+    if (it.disc) {
+      disc = document.createElement('div'); disc.className = 'disc-row';
+      disc.innerHTML = `<span>Discount</span><input type="number" min="0" step="0.01">
+        <select><option value="pct">%</option><option value="amt">${esc(curSymbol(c.currency || ''))}</option></select>
+        <span class="disc-saving"></span><button class="x" title="Remove the discount">×</button>`;
+      const [dv, dt] = [disc.querySelector('input'), disc.querySelector('select')];
+      dv.value = it.discValue || ''; dt.value = it.disc;
+      dv.oninput = () => { it.discValue = parseFloat(dv.value) || 0; sync(); changed(); };
+      dt.onchange = () => { it.disc = dt.value; sync(); changed(); };
+      disc.querySelector('.x').onclick = () => { it.disc = ''; it.discValue = 0; renderItems(); changed(); };
+    }
+    pct.onclick = () => {
+      if (!it.disc) { it.disc = 'pct'; it.discValue = 0; renderItems(); changed(); }
+      $$('#inv-items .disc-row input')[draft.items.filter((d, k) => k <= i && d.disc).length - 1]?.focus();
+    };
     // Fixed: you type the amount. Item: you type the quantity and the price of one. Others: priced from the client's rates.
     const sync = () => {
+      pct.hidden = it.kind === 'daysoff' && !it.disc; // a reduction already
+      pct.classList.toggle('on', !!it.disc);
+      pct.title = it.disc ? 'This line has a discount' : 'Add a discount to this line (a percentage or a whole amount)';
+      if (disc) {
+        const saving = lineDiscount(it, c);
+        disc.querySelector('.disc-saving').textContent = saving ? `Saving ${money(saving, c.currency)} · line ${money(lineAmount(it, c) - saving, c.currency)}` : 'No saving yet';
+      }
       const fixed = it.kind === 'fixed', item = it.kind === 'item';
       qty.disabled = fixed; qty.style.visibility = fixed ? 'hidden' : '';
       amt.readOnly = !fixed && !item;
@@ -410,7 +449,8 @@ function renderItems() {
     };
     x.onclick = () => { draft.items.splice(i, 1); renderItems(); changed(); };
     sync();
-    box.append(kind, desc, qty, amt, x);
+    box.append(kind, desc, qty, amt, pct, x);
+    if (disc) box.append(disc);
   });
   updateTotal();
 }
@@ -1018,22 +1058,30 @@ $('#rep-csv').onclick = () => {
 // ---------- quotes paid in steps ----------
 // Each line of a saved quote is a step the client pays for. h.paidSteps maps a line's index to the
 // date it was paid, e.g. { "0": "2026-11-19", "2": "2026-12-03" }.
+// A discount line isn't a step of its own: it comes off the line above it.
 const stepPaid = (h, i) => (h.paidSteps || {})[i] || null;
+const stepIdx = lines => (lines || []).map((l, i) => l.discount ? -1 : i).filter(i => i >= 0);
+function stepNet(lines, i) { // the line plus the discount lines straight under it
+  let n = num(lines[i].amount);
+  for (let k = i + 1; k < lines.length && lines[k].discount; k++) n += num(lines[k].amount);
+  return round2(n);
+}
 function stepSummary(h) {
-  const lines = h.lines || [];
+  const lines = h.lines || [], idx = stepIdx(lines);
   const subtotal = lines.reduce((s, l) => s + num(l.amount), 0);
   const factor = subtotal ? num(h.total) / subtotal : 1; // step amounts include tax, like the total
-  const paidIdx = lines.map((_, i) => i).filter(i => stepPaid(h, i));
-  const paid = round2(paidIdx.reduce((s, i) => s + num(lines[i].amount) * factor, 0));
-  return { count: lines.length, paidCount: paidIdx.length, factor, paid, outstanding: round2(num(h.total) - paid) };
+  const paidIdx = idx.filter(i => stepPaid(h, i));
+  const paid = round2(paidIdx.reduce((s, i) => s + stepNet(lines, i) * factor, 0));
+  return { count: idx.length, paidCount: paidIdx.length, factor, paid, outstanding: round2(num(h.total) - paid) };
 }
-// When a quote is saved again under the same number, lines that are unchanged keep their paid dates.
+// When a quote is saved again under the same number, lines that are unchanged (discount included) keep their paid dates.
 function carryPaidSteps(prev, lines) {
   if (!prev.paidSteps || !prev.lines) return null;
   const used = new Set(), out = {};
-  lines.forEach((l, i) => {
-    const j = prev.lines.findIndex((p, k) => !used.has(k) && stepPaid(prev, k) && p.desc === l.desc && num(p.amount) === num(l.amount));
-    if (j >= 0) { used.add(j); out[i] = stepPaid(prev, j); }
+  stepIdx(lines).forEach(i => {
+    const l = lines[i];
+    const j = stepIdx(prev.lines).find(k => !used.has(k) && stepPaid(prev, k) && prev.lines[k].desc === l.desc && stepNet(prev.lines, k) === stepNet(lines, i));
+    if (j !== undefined) { used.add(j); out[i] = stepPaid(prev, j); }
   });
   return Object.keys(out).length ? out : null;
 }
@@ -1049,7 +1097,7 @@ function setStepPaid(id, i, paid) {
 }
 function setAllStepsPaid(id, paid) {
   const h = invoices.find(x => x.id === id); if (!h || !h.lines) return;
-  if (paid) { const today = todayIso(); h.paidSteps = Object.fromEntries(h.lines.map((_, i) => [i, stepPaid(h, i) || today])); }
+  if (paid) { const today = todayIso(); h.paidSteps = Object.fromEntries(stepIdx(h.lines).map(i => [i, stepPaid(h, i) || today])); }
   else delete h.paidSteps;
   persist('invoices'); renderHistory();
   toast(paid ? `${h.inv.number} is paid in full` : `Cleared the payments on ${h.inv.number}`);
@@ -1057,11 +1105,13 @@ function setAllStepsPaid(id, paid) {
 const openSteps = new Set(); // quotes whose payment steps are shown in History
 function stepsRow(h) {
   const cur = h.c.currency, s = stepSummary(h), edit = can('markPaid');
-  const rows = (h.lines || []).map((l, i) => {
-    const d = stepPaid(h, i);
+  const lines = h.lines || [];
+  const rows = stepIdx(lines).map(i => {
+    const l = lines[i], d = stepPaid(h, i);
+    const off = lines[i + 1] && lines[i + 1].discount ? `, less ${lines[i + 1].desc.toLowerCase()}` : '';
     const box = edit ? `<input type="checkbox" data-step="${i}" data-id="${h.id}" ${d ? 'checked' : ''}>` : `<span>${d ? '✓' : ''}</span>`;
-    return `<label class="step${d ? ' done' : ''}">${box}<span class="step-desc">${esc(l.desc || '(no description)')}${l.detail ? ` <span class="muted">${esc(l.detail)}</span>` : ''}</span>
-      <span class="num">${esc(money(round2(num(l.amount) * s.factor), cur))}</span>
+    return `<label class="step${d ? ' done' : ''}">${box}<span class="step-desc">${esc(l.desc || '(no description)')}${l.detail || off ? ` <span class="muted">${esc((l.detail || '') + off)}</span>` : ''}</span>
+      <span class="num">${esc(money(round2(stepNet(lines, i) * s.factor), cur))}</span>
       <span class="muted step-date">${d ? 'Paid ' + esc(shortDate(d)) : ''}</span></label>`;
   }).join('');
   const all = edit ? (s.paidCount === s.count

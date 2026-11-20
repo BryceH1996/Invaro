@@ -37,6 +37,7 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 ### Invoicing
 - **Saved clients:** each client keeps its address, payment terms, currency (GBP, USD, EUR or ZAR), hourly rate, daily rate and day-off reduction.
 - **Priced for you:** add lines as days, hours, days off or fixed amounts, and the total is worked out from the client's rates. Set a tax rate for a client to add a VAT line.
+- **Discounts:** click **%** beside any line to take a percentage or a whole amount off it. The saving shows as its own line under it, and comes off before the total and VAT.
 - **Live preview:** the PDF updates as you type. Zoom with − / +, or Ctrl (⌘ on a Mac) with + / − / 0.
 - **A folder per client:** **Save invoice** puts the PDF straight into that client's folder, e.g. `Documents/Invaro/Northwind Design Co/Northwind Design Co. Invoice - November 2026 - Alex Morgan.pdf`.
 - **Numbering:** invoice numbers carry on from the last one you saved, and never clash in a team.

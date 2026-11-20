@@ -187,7 +187,7 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
   const fileState = n => (state.files[n] ||= {});
   async function upload(name) {
     let data = readLocal(name);
-    if (name === 'settings') { const { draft, ...rest } = data; data = withLogos(rest); } // the half-typed draft stays on this computer
+    if (name === 'settings') { const { draft, putAside, ...rest } = data; data = withLogos(rest); } // the half-typed draft (and one put aside while editing) stays on this computer
     const rows = await request('/rest/v1/documents?on_conflict=user_id,name', {
       method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
       body: { name, data, updated_at: new Date().toISOString() },
@@ -200,7 +200,7 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
     let data = rows[0].data;
     if (name === 'settings') {
       data = takeLogos(data);
-      if (keepDraft) { try { const local = readLocal('settings'); if (local.draft) data.draft = local.draft; } catch (e) {} }
+      if (keepDraft) { try { const local = readLocal('settings'); if (local.draft) data.draft = local.draft; if (local.putAside) data.putAside = local.putAside; } catch (e) {} }
     }
     writeLocal(name, data);
     Object.assign(fileState(name), { dirty: false, remoteAt: rows[0].updated_at });

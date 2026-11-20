@@ -47,6 +47,7 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 - **Quotes:** switch **New invoice** to **Quote** for a quote with its own numbering and a "valid until" date, then turn it into an invoice with one click. Itemise it with **Item** lines (a quantity at a price each).
 - **Quotes paid in steps:** in **History**, click **Payments** on a quote and tick off each line as the client pays for it. Invaro shows what's been paid and what's still outstanding.
 - **History:** every saved invoice, ready to open, save again, or copy into a new one.
+- **Edit before you send:** click **Edit** on any saved invoice or quote to change values or add lines, then **Save changes**. It keeps its number, file and paid status, and whatever you were drafting comes back afterwards.
 
 ### Your look
 - **Nine designs:** Classic, Wave, Minimal, Bold, Elegant, Sidebar, Corporate, Mono and Geometric, in any colour, with a second colour on two-tone designs to match your branding, plus your company logo.

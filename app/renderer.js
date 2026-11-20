@@ -378,13 +378,17 @@ function renderRates() {
 }
 function renderInvoice() {
   renderClientOptions(); renderRates();
-  const quote = draft.type === 'quote';
-  $$('#doc-type button').forEach(b => b.classList.toggle('on', b.dataset.type === (quote ? 'quote' : 'invoice')));
-  $('#inv-heading').textContent = quote ? 'New quote' : 'New invoice';
+  const quote = draft.type === 'quote', editing = !!draft.editing;
+  $$('#doc-type button').forEach(b => { b.classList.toggle('on', b.dataset.type === (quote ? 'quote' : 'invoice')); b.disabled = editing; });
+  $('#inv-heading').textContent = editing ? `Editing ${draft.editing}` : quote ? 'New quote' : 'New invoice';
+  // While editing, the number, client and type stay as saved, so it replaces the right one.
+  $('#edit-bar').hidden = !editing; $('#edit-what').textContent = draft.editing || '';
+  $('#inv-number').readOnly = editing; $('#inv-client').disabled = editing;
+  $('#reset-draft').hidden = editing;
   $('#lbl-number').textContent = quote ? 'Quote no.' : 'Invoice no.';
   $('#lbl-date').textContent = quote ? 'Quote date' : 'Invoice date';
   $('#lbl-due').textContent = quote ? 'Valid until' : 'Due date';
-  $('#download').textContent = quote ? 'Save quote' : 'Save invoice';
+  $('#download').textContent = editing ? 'Save changes' : quote ? 'Save quote' : 'Save invoice';
   $('#inv-private').checked = !!draft.private;
   $('#inv-private-label').textContent = teamState.team ? `Personal: don't share this with ${teamState.team.name}` : "Personal: don't share this with a team";
   $('#inv-number').value = draft.number; $('#inv-period').value = draft.period;
@@ -394,6 +398,45 @@ function renderInvoice() {
   renderWholeDiscount();
   renderItems();
 }
+// ---------- editing a saved invoice or quote ----------
+// Edit in History loads it here with its own number, client, dates and lines (draft.editing is its
+// number). Saving replaces it in History and its PDF file, keeping its paid status. Whatever you were
+// drafting is put aside (settings.putAside) and comes back when you save or cancel.
+function leaveEditing() { // false if you'd rather keep editing
+  if (!draft.editing) return true;
+  if (!confirm(`Stop editing ${draft.editing}? Changes you haven't saved are lost; the saved one stays as it was.`)) return false;
+  restoreDraft();
+  return true;
+}
+function restoreDraft() {
+  const back = settings.putAside;
+  delete settings.putAside;
+  draft = back && client(back.clientId) ? { ...back, items: back.items.map(normItem) } : newDraft(draft.clientId, draft.type);
+  delete draft.editing;
+  if (numberUsed(draft.number)) draft.number = nextInvoiceNumber(draft.type || 'invoice');
+}
+function editSaved(h) {
+  const c = client(h.c && h.c.id);
+  if (!c) return toast(`${h.c.company} isn't one of your clients any more, so ${h.inv.number} can't be edited. Use Copy to start a new one for another client.`);
+  if (draft.editing === h.inv.number) return go('invoice');
+  if (!leaveEditing()) return;
+  const what = docType(h) === 'quote' ? 'quote' : 'invoice';
+  if (h.paidAt && !confirm(`${h.inv.number} is marked as paid. Edit it anyway?`)) return;
+  settings.putAside = clone(draft);
+  draft = { ...clone(h.inv), items: (h.inv.items || []).map(normItem), private: !!h.private, editing: h.inv.number };
+  // Hours and days are priced from the client's rates as they are now.
+  const moved = ['currency', 'hourlyRate', 'dailyRate', 'dayOffRate', 'taxRate'].filter(k => String(h.c[k] ?? '') !== String(c[k] ?? ''));
+  renderInvoice(); changed(); go('invoice');
+  toast(moved.length
+    ? `Editing ${h.inv.number}. ${c.company}'s rates or tax have changed since it was saved, so it's priced at today's: check the total before saving.`
+    : `Editing ${h.inv.number}. Make your changes and click Save changes to update the ${what}.`);
+}
+$('#edit-cancel').onclick = () => {
+  const n = draft.editing;
+  restoreDraft(); renderInvoice(); changed();
+  toast(`${n} is unchanged.`);
+};
+
 // Switching between invoice and quote keeps the client and lines, with the right number and dates.
 $('#doc-type').onclick = e => {
   const type = e.target.dataset.type;
@@ -612,11 +655,13 @@ $('#download').onclick = async () => {
   entry.total = t.total; entry.subtotal = t.subtotal; entry.tax = t.tax;
   if (docType(entry) === 'invoice') entry.tracked = true; // paid / overdue tracking (from 1.12.0)
   entry.private = !!draft.private; delete entry.inv.private; // personal: never shared with a team
-  // Re-saving an invoice number that's already in History overwrites that same file.
+  const editing = draft.editing; delete entry.inv.editing;
+  // Re-saving an invoice number that's already in History (e.g. after Edit) overwrites that same file.
   const previous = invoices.find(h => h.inv.number === entry.inv.number);
   entry.file = previous ? previous.file : '';
   if (previous) {
     entry.paidAt = previous.paidAt; entry.tracked = previous.tracked;
+    if (previous.convertedTo) entry.convertedTo = previous.convertedTo; // a quote remembers its invoice
     const steps = carryPaidSteps(previous, entry.lines);
     if (steps) entry.paidSteps = steps;
   }
@@ -628,8 +673,11 @@ $('#download').onclick = async () => {
   persist('invoices');
   settings.nextNumber = nextNumberValue('invoice');
   settings.nextQuoteNumber = nextNumberValue('quote');
-  // Done: start the next one for the same client, of the same kind, with the following number.
-  draft = newDraft(draft.clientId, draft.type);
+  // Done: back to what you were drafting before the edit, or on to the next one for the same client,
+  // of the same kind, with the following number.
+  // (savePdf has already said where it was saved and whether it was backed up.)
+  if (editing) restoreDraft();
+  else draft = newDraft(draft.clientId, draft.type);
   renderInvoice(); changed(); renderHistory(); renderMe(); renderOverdue();
 };
 
@@ -717,6 +765,7 @@ $('#cl-delete').onclick = () => {
 // Switch the invoice being drafted to this client (keeping its number) and show it.
 function invoiceClient(id) {
   if (!client(id)) return;
+  if (!leaveEditing()) return;
   if (draft.type === 'quote') draft = newDraft(id, 'invoice'); // reminders are for invoices
   else if (draft.clientId !== id) { const keep = draft.number; draft = newDraft(id, 'invoice'); draft.number = keep; }
   renderInvoice(); changed(); go('invoice');
@@ -1234,7 +1283,8 @@ function renderHistory() {
      <td class="num">${h.file && window.api ? `<button class="btn" data-act="open" data-id="${h.id}">Open</button>` : ''}
      ${h.file || !window.api ? (make ? `<button class="btn" data-act="pdf" data-id="${h.id}" title="Save this again (e.g. after editing your details)">Re-save</button>` : '')
        : `<button class="btn" data-act="pdf" data-id="${h.id}" title="Saved on another computer. Make the PDF on this one too.">Save PDF here</button>`}
-     ${make ? `<button class="btn" data-act="copy" data-id="${h.id}" title="Start a new invoice with these lines">Copy</button>
+     ${make ? `<button class="btn" data-act="edit" data-id="${h.id}" title="Change this ${docType(h) === 'quote' ? 'quote' : 'invoice'} and save it again under the same number">Edit</button>
+     <button class="btn" data-act="copy" data-id="${h.id}" title="Start a new invoice with these lines">Copy</button>
      <button class="btn" data-act="private" data-id="${h.id}" title="${h.private ? 'Share this with your team' : 'Keep this off your team'}">${h.private ? 'Share' : 'Make personal'}</button>
      <button class="x" data-act="del" data-id="${h.id}" title="Remove from history">×</button>` : ''}</td></tr>`
      + (docType(h) === 'quote' && openSteps.has(h.id) ? stepsRow(h) : '')).join('');
@@ -1259,6 +1309,7 @@ $('#hist').onclick = async e => {
   } else if (act === 'steps-all' || act === 'steps-none') {
     setAllStepsPaid(id, act === 'steps-all');
   } else if (act === 'convert') {
+    if (!leaveEditing()) return;
     // A new invoice for the quote's client, with its lines; the quote remembers which invoice it became.
     draft = newDraft(client(h.c.id) ? h.c.id : undefined, 'invoice');
     draft.items = clone(h.inv.items).map(normItem);
@@ -1275,7 +1326,10 @@ $('#hist').onclick = async e => {
       : `Share ${h.inv.number} with ${team}?\n\nEveryone in the team will see it${c && c.private ? `, including ${c.company}'s details on it (that client stays personal)` : ''}.`)) return;
     h.private = on; persist('invoices'); renderHistory();
     toast(on ? `${h.inv.number} is personal.` : `${h.inv.number} is ${team ? `shared with ${team}` : 'no longer personal'}.`);
+  } else if (act === 'edit') {
+    editSaved(h);
   } else if (act === 'copy') {
+    if (!leaveEditing()) return;
     draft = newDraft(client(h.c.id) ? h.c.id : undefined);
     draft.items = clone(h.inv.items).map(normItem);
     if (h.inv.discount) draft.discount = clone(h.inv.discount);
@@ -1329,7 +1383,8 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
     ? { ...settings.draft, items: settings.draft.items.map(normItem) }
     : newDraft();
   // A leftover draft whose number was already saved gets the next free number.
-  if (numberUsed(draft.number)) draft.number = nextInvoiceNumber(draft.type || "invoice");
+  if (draft.editing && !numberUsed(draft.editing)) delete draft.editing; // removed meanwhile: it saves as a new one
+  if (!draft.editing && numberUsed(draft.number)) draft.number = nextInvoiceNumber(draft.type || "invoice");
   editingClient = clients[0]?.id;
   renderInvoice(); renderClients(); renderMe(); renderHistory(); renderOverdue(); renderZoom(); refreshPreview();
   if (store.version) $('#app-version').textContent = 'v' + await store.version();
@@ -1488,7 +1543,7 @@ function mergeRemote({ kinds, data }) {
   mineToSave.forEach(persist);
   // Redraw what changed, keeping the draft (and its number, unless someone just used it).
   if (draft && !client(draft.clientId) && clients.length) draft = newDraft();
-  else if (draft && numberUsed(draft.number) && !invoices.some(h => h.inv.number === draft.number && !h.savedBy)) draft.number = nextInvoiceNumber(draft.type || 'invoice');
+  else if (draft && !draft.editing && numberUsed(draft.number) && !invoices.some(h => h.inv.number === draft.number && !h.savedBy)) draft.number = nextInvoiceNumber(draft.type || 'invoice');
   settings.nextNumber = nextNumberValue('invoice'); settings.nextQuoteNumber = Math.max(num(settings.nextQuoteNumber), nextNumberValue('quote'));
   if (kinds.includes('clients')) { renderClients(); renderInvoice(); }
   if (kinds.includes('settings')) { renderMe(); renderDesign(); renderBank(); renderInvoice(); }

@@ -39,6 +39,10 @@
           <button data-type="invoice" class="on">Invoice</button><button data-type="quote">Quote</button>
         </div>
       </div>
+      <div class="edit-bar" id="edit-bar" hidden>
+        <span>Saving replaces <b id="edit-what"></b> in History, with the same number and file. Its paid status is kept.</span>
+        <button class="btn" id="edit-cancel" title="Leave it as it was and go back to what you were working on">Cancel editing</button>
+      </div>
       <label>Client</label>
       <select id="inv-client"></select>
       <p class="muted rates" id="inv-rates"></p>

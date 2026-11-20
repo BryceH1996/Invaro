@@ -46,7 +46,8 @@ async function flushSaves() {
 }
 
 // ---------- pricing ----------
-const KINDS = { hours: 'Hours', days: 'Days', daysoff: 'Days off', fixed: 'Fixed' };
+// "item" is a quantity at a price of its own (e.g. 4 × doors @ R1,200), for itemised quotes.
+const KINDS = { hours: 'Hours', days: 'Days', daysoff: 'Days off', item: 'Item', fixed: 'Fixed' };
 const dayOffRate = c => (c.dayOffRate === '' || c.dayOffRate == null) ? num(c.dailyRate) : num(c.dayOffRate);
 const rateFor = (kind, c) => ({ hours: num(c.hourlyRate), days: num(c.dailyRate), daysoff: dayOffRate(c) }[kind] ?? 0);
 
@@ -56,6 +57,7 @@ function lineAmount(it, c) {
     case 'hours': return round2(q * num(c.hourlyRate));
     case 'days': return round2(q * num(c.dailyRate));
     case 'daysoff': return round2(-q * dayOffRate(c));
+    case 'item': return round2(q * num(it.price));
     default: return round2(num(it.amount));
   }
 }
@@ -65,6 +67,7 @@ function lineDetail(it, c) {
   if (it.kind === 'hours') return `${q} ${plural('hr')} @ ${money(c.hourlyRate, cur)}/hr`;
   if (it.kind === 'days') return `${q} ${plural('day')} @ ${money(c.dailyRate, cur)}/day`;
   if (it.kind === 'daysoff') return `${q} ${plural('day')} × ${money(dayOffRate(c), cur)}`;
+  if (it.kind === 'item') return `${q} × ${money(it.price, cur)}`;
   return '';
 }
 // Lines as they appear on the PDF (zero-value lines dropped).
@@ -73,7 +76,7 @@ function priced(items, c) {
   return items.map(it => {
     const amount = lineAmount(it, c);
     const fixed = it.kind === 'fixed';
-    const price = fixed ? amount : (it.kind === 'daysoff' ? -1 : 1) * rateFor(it.kind, c);
+    const price = fixed ? amount : it.kind === 'item' ? num(it.price) : (it.kind === 'daysoff' ? -1 : 1) * rateFor(it.kind, c);
     return { desc: it.desc, detail: lineDetail(it, c), qty: fixed ? 1 : num(it.qty), price, amount };
   }).filter(l => l.amount !== 0);
 }
@@ -249,7 +252,7 @@ $('#logo-remove').onclick = async () => {
   await store.removeLogo(); logo = null; settings.logo = ''; persist('settings');
   renderDesign(); refreshPreview(0);
 };
-const normItem = it => ({ kind: KINDS[it.kind] ? it.kind : 'fixed', desc: it.desc || '', qty: it.qty ?? 1, amount: it.amount ?? 0 });
+const normItem = it => ({ kind: KINDS[it.kind] ? it.kind : 'fixed', desc: it.desc || '', qty: it.qty ?? 1, amount: it.amount ?? 0, price: it.price ?? 0 });
 
 // ---------- drafts ----------
 const client = id => clients.find(c => c.id === id);
@@ -378,25 +381,33 @@ function renderItems() {
     const qty = document.createElement('input'); qty.type = 'number'; qty.step = '0.25'; qty.min = '0'; qty.value = it.qty;
     const amt = document.createElement('input'); amt.type = 'number'; amt.step = '0.01';
     const x = document.createElement('button'); x.className = 'x'; x.textContent = '×'; x.title = 'Remove line';
+    // Fixed: you type the amount. Item: you type the quantity and the price of one. Others: priced from the client's rates.
     const sync = () => {
-      const fixed = it.kind === 'fixed';
+      const fixed = it.kind === 'fixed', item = it.kind === 'item';
       qty.disabled = fixed; qty.style.visibility = fixed ? 'hidden' : '';
-      amt.readOnly = !fixed;
-      amt.value = fixed ? it.amount : lineAmount(it, c).toFixed(2);
-      amt.title = fixed ? '' : lineDetail(it, c);
+      amt.readOnly = !fixed && !item;
+      if (document.activeElement !== amt) amt.value = fixed ? it.amount : item ? it.price : lineAmount(it, c).toFixed(2);
+      amt.placeholder = item ? 'Price each' : '';
+      amt.title = fixed ? '' : item ? `Price of one. Line total ${money(lineAmount(it, c), c.currency)}` : lineDetail(it, c);
     };
     kind.onchange = () => {
       const was = it.kind; it.kind = kind.value;
       if (!it.desc || it.desc === 'Days off') it.desc = it.kind === 'daysoff' ? 'Days off' : (was === 'daysoff' ? '' : it.desc);
       desc.value = it.desc;
       if (it.kind !== 'fixed' && !num(it.qty)) it.qty = 1;
+      if (it.kind === 'item' && was === 'fixed' && !num(it.price)) it.price = it.amount; // keep what was typed
       qty.value = it.qty;
-      if (it.kind !== 'fixed' && !rateFor(it.kind, c)) toast(`${c.company || 'This client'} has no ${KINDS[it.kind].toLowerCase()} rate set`);
+      if (!['fixed', 'item'].includes(it.kind) && !rateFor(it.kind, c)) toast(`${c.company || 'This client'} has no ${KINDS[it.kind].toLowerCase()} rate set`);
       sync(); changed();
     };
     desc.oninput = () => { it.desc = desc.value; changed(); };
     qty.oninput = () => { it.qty = parseFloat(qty.value) || 0; sync(); changed(); };
-    amt.oninput = () => { if (it.kind === 'fixed') { it.amount = parseFloat(amt.value) || 0; changed(); } };
+    amt.oninput = () => {
+      if (it.kind === 'fixed') it.amount = parseFloat(amt.value) || 0;
+      else if (it.kind === 'item') { it.price = parseFloat(amt.value) || 0; sync(); }
+      else return;
+      changed();
+    };
     x.onclick = () => { draft.items.splice(i, 1); renderItems(); changed(); };
     sync();
     box.append(kind, desc, qty, amt, x);
@@ -520,7 +531,11 @@ $('#download').onclick = async () => {
   // Re-saving an invoice number that's already in History overwrites that same file.
   const previous = invoices.find(h => h.inv.number === entry.inv.number);
   entry.file = previous ? previous.file : '';
-  if (previous) { entry.paidAt = previous.paidAt; entry.tracked = previous.tracked; }
+  if (previous) {
+    entry.paidAt = previous.paidAt; entry.tracked = previous.tracked;
+    const steps = carryPaidSteps(previous, entry.lines);
+    if (steps) entry.paidSteps = steps;
+  }
   if (teamState.team && !previous && !(await claimNumber(entry))) return;
   const path = await savePdf(entry);
   if (!path) return; // save failed (already reported)
@@ -572,7 +587,7 @@ function renderClients() {
   $('#cl-locked').textContent = !can('editClients') ? `As ${aRole(teamState.team && teamState.team.role)}, you can look at ${teamState.team ? teamState.team.name : 'the team'}'s clients but not change them.`
     : 'Rates, currency, payment terms and tax are greyed out: only an admin can change them for a shared client.';
   $('#cl-items').textContent = (c.items || []).length
-    ? c.items.map(normItem).map(i => i.kind === 'fixed' ? `${i.desc} ${money(i.amount, c.currency)}` : `${i.desc} (${KINDS[i.kind].toLowerCase()})`).join(' · ')
+    ? c.items.map(normItem).map(i => i.kind === 'fixed' ? `${i.desc} ${money(i.amount, c.currency)}` : i.kind === 'item' ? `${i.desc} (${i.qty} × ${money(i.price, c.currency)})` : `${i.desc} (${KINDS[i.kind].toLowerCase()})`).join(' · ')
     : 'None yet. Fill in lines on an invoice and click "Save lines as client default".';
   $('#cl-reminder').textContent = reminderLabel(c.reminderDay) + '.';
 }
@@ -1000,11 +1015,75 @@ $('#rep-csv').onclick = () => {
   a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 };
 
+// ---------- quotes paid in steps ----------
+// Each line of a saved quote is a step the client pays for. h.paidSteps maps a line's index to the
+// date it was paid, e.g. { "0": "2026-11-19", "2": "2026-12-03" }.
+const stepPaid = (h, i) => (h.paidSteps || {})[i] || null;
+function stepSummary(h) {
+  const lines = h.lines || [];
+  const subtotal = lines.reduce((s, l) => s + num(l.amount), 0);
+  const factor = subtotal ? num(h.total) / subtotal : 1; // step amounts include tax, like the total
+  const paidIdx = lines.map((_, i) => i).filter(i => stepPaid(h, i));
+  const paid = round2(paidIdx.reduce((s, i) => s + num(lines[i].amount) * factor, 0));
+  return { count: lines.length, paidCount: paidIdx.length, factor, paid, outstanding: round2(num(h.total) - paid) };
+}
+// When a quote is saved again under the same number, lines that are unchanged keep their paid dates.
+function carryPaidSteps(prev, lines) {
+  if (!prev.paidSteps || !prev.lines) return null;
+  const used = new Set(), out = {};
+  lines.forEach((l, i) => {
+    const j = prev.lines.findIndex((p, k) => !used.has(k) && stepPaid(prev, k) && p.desc === l.desc && num(p.amount) === num(l.amount));
+    if (j >= 0) { used.add(j); out[i] = stepPaid(prev, j); }
+  });
+  return Object.keys(out).length ? out : null;
+}
+function setStepPaid(id, i, paid) {
+  const h = invoices.find(x => x.id === id); if (!h || !h.lines || !h.lines[i]) return;
+  const steps = { ...(h.paidSteps || {}) };
+  if (paid) steps[i] = todayIso(); else delete steps[i];
+  if (Object.keys(steps).length) h.paidSteps = steps; else delete h.paidSteps;
+  persist('invoices'); renderHistory();
+  const s = stepSummary(h), cur = h.c.currency;
+  toast(s.paidCount === s.count ? `${h.inv.number} is paid in full (${money(h.total, cur)})`
+    : `${h.inv.number}: ${money(s.paid, cur)} paid, ${money(s.outstanding, cur)} still to pay`);
+}
+function setAllStepsPaid(id, paid) {
+  const h = invoices.find(x => x.id === id); if (!h || !h.lines) return;
+  if (paid) { const today = todayIso(); h.paidSteps = Object.fromEntries(h.lines.map((_, i) => [i, stepPaid(h, i) || today])); }
+  else delete h.paidSteps;
+  persist('invoices'); renderHistory();
+  toast(paid ? `${h.inv.number} is paid in full` : `Cleared the payments on ${h.inv.number}`);
+}
+const openSteps = new Set(); // quotes whose payment steps are shown in History
+function stepsRow(h) {
+  const cur = h.c.currency, s = stepSummary(h), edit = can('markPaid');
+  const rows = (h.lines || []).map((l, i) => {
+    const d = stepPaid(h, i);
+    const box = edit ? `<input type="checkbox" data-step="${i}" data-id="${h.id}" ${d ? 'checked' : ''}>` : `<span>${d ? '✓' : ''}</span>`;
+    return `<label class="step${d ? ' done' : ''}">${box}<span class="step-desc">${esc(l.desc || '(no description)')}${l.detail ? ` <span class="muted">${esc(l.detail)}</span>` : ''}</span>
+      <span class="num">${esc(money(round2(num(l.amount) * s.factor), cur))}</span>
+      <span class="muted step-date">${d ? 'Paid ' + esc(shortDate(d)) : ''}</span></label>`;
+  }).join('');
+  const all = edit ? (s.paidCount === s.count
+    ? `<button class="link" data-act="steps-none" data-id="${h.id}">Clear all</button>`
+    : `<button class="link" data-act="steps-all" data-id="${h.id}">Mark all paid</button>`) : '';
+  return `<tr class="steps-row"><td colspan="7"><div class="steps">
+    ${rows}
+    <div class="steps-sum"><span>Paid <b>${esc(money(s.paid, cur))}</b> of ${esc(money(h.total, cur))} · Outstanding <b>${esc(money(s.outstanding, cur))}</b></span>${all}</div>
+    ${h.tax ? `<p class="muted">Amounts include ${esc(h.taxLabel || 'VAT')}.</p>` : ''}
+  </div></td></tr>`;
+}
+
 // ---------- paid / unpaid / overdue ----------
 const todayIso = () => iso(new Date());
 // Invoices saved from 1.12.0 on are tracked; older ones show "–" (but can still be marked paid).
 function payStatus(h) {
-  if (docType(h) === 'quote') return h.convertedTo ? { key: 'quote', label: `Invoiced (${h.convertedTo})` } : { key: 'quote', label: 'Quote' };
+  if (docType(h) === 'quote') {
+    const s = stepSummary(h);
+    if (s.count && s.paidCount === s.count) return { key: 'paid', label: 'Paid in full' };
+    if (s.paidCount) return { key: 'part', label: `${s.paidCount} of ${s.count} paid` };
+    return h.convertedTo ? { key: 'quote', label: `Invoiced (${h.convertedTo})` } : { key: 'quote', label: 'Quote' };
+  }
   if (h.paidAt) return { key: 'paid', label: `Paid ${shortDate(h.paidAt)}` };
   if (!h.tracked) return { key: 'untracked', label: '–' };
   if (h.inv.due && h.inv.due < todayIso()) return { key: 'overdue', label: 'Overdue' };
@@ -1038,7 +1117,8 @@ function renderHistory() {
   const statusCell = h => {
     const s = payStatus(h);
     const btn = docType(h) === 'quote'
-      ? (make ? `<button class="link" data-act="convert" data-id="${h.id}" title="Start an invoice from this quote">Make invoice</button>` : '')
+      ? `<button class="link" data-act="steps" data-id="${h.id}" title="Tick off each line of this quote as it's paid">${openSteps.has(h.id) ? 'Hide payments' : 'Payments'}</button>`
+        + (make ? `<button class="link" data-act="convert" data-id="${h.id}" title="Start an invoice from this quote">Make invoice</button>` : '')
       : !can('markPaid') ? ''
         : h.paidAt ? `<button class="link" data-act="unpaid" data-id="${h.id}">Undo</button>`
           : `<button class="link" data-act="paid" data-id="${h.id}">Mark paid</button>`;
@@ -1057,8 +1137,10 @@ function renderHistory() {
        : `<button class="btn" data-act="pdf" data-id="${h.id}" title="Saved on another computer. Make the PDF on this one too.">Save PDF here</button>`}
      ${make ? `<button class="btn" data-act="copy" data-id="${h.id}" title="Start a new invoice with these lines">Copy</button>
      <button class="btn" data-act="private" data-id="${h.id}" title="${h.private ? 'Share this with your team' : 'Keep this off your team'}">${h.private ? 'Share' : 'Make personal'}</button>
-     <button class="x" data-act="del" data-id="${h.id}" title="Remove from history">×</button>` : ''}</td></tr>`).join('');
+     <button class="x" data-act="del" data-id="${h.id}" title="Remove from history">×</button>` : ''}</td></tr>`
+     + (docType(h) === 'quote' && openSteps.has(h.id) ? stepsRow(h) : '')).join('');
 }
+$('#hist').onchange = e => { if (e.target.dataset.step != null) setStepPaid(e.target.dataset.id, Number(e.target.dataset.step), e.target.checked); };
 $('#hist').onclick = async e => {
   const { act, id } = e.target.dataset;
   const h = invoices.find(x => x.id === id); if (!h) return;
@@ -1072,6 +1154,11 @@ $('#hist').onclick = async e => {
     toast(ok ? `${h.inv.number} backed up to ${backupWhere()}` : `Backup failed: ${h.backupError}`);
   } else if (act === 'paid' || act === 'unpaid') {
     setPaid(id, act === 'paid');
+  } else if (act === 'steps') {
+    if (openSteps.has(id)) openSteps.delete(id); else openSteps.add(id);
+    renderHistory();
+  } else if (act === 'steps-all' || act === 'steps-none') {
+    setAllStepsPaid(id, act === 'steps-all');
   } else if (act === 'convert') {
     // A new invoice for the quote's client, with its lines; the quote remembers which invoice it became.
     draft = newDraft(client(h.c.id) ? h.c.id : undefined, 'invoice');

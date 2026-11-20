@@ -108,7 +108,16 @@ td.num, th.num { text-align:right; white-space:nowrap; }
 #hist td { vertical-align:top; }
 #hist td:last-child { white-space:normal; text-align:right; min-width:120px; }
 #hist .btn { padding:3px 8px; font-size:12px; margin:0 0 4px 2px; }
-#hist .status + .link { display:block; margin-top:3px; font-size:12px; }
+#hist .status ~ .link { display:block; margin-top:3px; font-size:12px; }
+.status.part { background:var(--warn-bg); color:var(--warn-fg); }
+/* A quote's payment steps, opened under its row in History */
+#hist tr.steps-row td { background:var(--mist); text-align:left; padding:8px 12px 10px; }
+.steps .step { display:grid; grid-template-columns:22px 1fr auto 80px; gap:8px; align-items:center; padding:5px 0; border-bottom:1px solid var(--border); cursor:pointer; font-size:13px; text-transform:none; letter-spacing:0; color:inherit; margin:0; }
+.steps .step input { width:auto; margin:0; accent-color:var(--brand); }
+.steps .step.done .step-desc { color:var(--slate); text-decoration:line-through; }
+.steps .step-date { text-align:right; }
+.steps-sum { display:flex; align-items:center; justify-content:space-between; gap:12px; padding-top:8px; font-size:13px; }
+.steps p.muted { margin:4px 0 0; }
 td .btn { padding:4px 10px; }
 .muted { color:var(--slate); font-size:12px; }
 .drive-status { margin:0 0 6px; padding:8px 10px; border-radius:6px; background:var(--mist); font-size:13px; }

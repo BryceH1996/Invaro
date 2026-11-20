@@ -145,7 +145,7 @@ begin
   if r = 'accountant' then
     if tg_op = 'INSERT' then return null; end if;                -- adds nothing
     if new.kind = 'invoice' and not old.deleted and old.data is not null then
-      new.data := public.keep_keys(old.data, new.data, array['paidAt']); -- only the paid date
+      new.data := public.keep_keys(old.data, new.data, array['paidAt', 'paidSteps']); -- only the paid dates
     else
       new.data := old.data;
     end if;
@@ -165,7 +165,7 @@ begin
         new.data := public.keep_keys(new.data, old.data, billing);
       end if;
     elsif new.kind = 'invoice' and tg_op = 'UPDATE' and not new.deleted and not reserved and not old.deleted then
-      new.data := public.keep_keys(new.data, old.data, array['paidAt']); -- can't mark paid
+      new.data := public.keep_keys(new.data, old.data, array['paidAt', 'paidSteps']); -- can't mark paid
     end if;
   elsif r is null and auth.uid() is not null then
     return null;                                                  -- not in the team (RLS stops this anyway)

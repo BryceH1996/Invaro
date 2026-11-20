@@ -1422,7 +1422,7 @@ function applyRights() {
 }
 const inviteMessage = (team, email) => `Hi! I've invited you to "${team}" in Invaro, so we can work on the same clients and invoices.
 
-1. Install Invaro: https://github.com/BryceH1996/invoicer/releases/latest
+1. Install Invaro: https://github.com/BryceH1996/Invaro/releases/latest
 2. Open My details → Account & sync, and sign in with Google as ${email}
 3. Click Join next to the invitation.`;
 function renderTeam(s) {

@@ -18,7 +18,7 @@ permissions:
 jobs:
   mac:
     # Only the public repo has the releases people download from.
-    if: github.repository == 'BryceH1996/invoicer'
+    if: github.repository == 'BryceH1996/Invaro'
     runs-on: macos-latest
     timeout-minutes: 40
     env:

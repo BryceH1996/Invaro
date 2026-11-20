@@ -122,7 +122,8 @@ function publishPublic() {
     commit = execSync(`git commit-tree ${tree} -p ${parent} -F -`, { cwd: root, input: message, encoding: 'utf8' }).trim();
     git(`push -q public ${commit}:refs/heads/main`, quiet);
   }
-  git(`push -q public ${commit}:refs/tags/${tag}`, quiet);
+  // On a rerun (--github-only) the tag is already there: leave it on the released commit.
+  if (!git(`ls-remote public refs/tags/${tag}`)) git(`push -q public ${commit}:refs/tags/${tag}`, quiet);
 }
 
 // ---- 5. GitHub Release with the installer ----
@@ -138,9 +139,18 @@ async function publishGithubRelease() {
   if (!fs.existsSync(src)) fail(`Missing ${src}. Build it first (npm run dist).`);
   const token = githubToken();
   const gh = async (url, opts = {}) => {
-    const res = await fetch(url.startsWith('http') ? url : `https://api.github.com/repos/${REPO}${url}`, {
-      ...opts, headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'invaro-release', ...(opts.headers || {}) },
+    const full = url.startsWith('http') ? url : `https://api.github.com/repos/${REPO}${url}`;
+    const send = to => fetch(to, {
+      ...opts, redirect: 'manual',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'invaro-release', ...(opts.headers || {}) },
     });
+    // GitHub sometimes answers with a 307/308 to another address; send the same request there.
+    let res = await send(full);
+    for (let hops = 0; [301, 302, 307, 308].includes(res.status) && hops < 3; hops++) {
+      const to = res.headers.get('location') || ((await res.json().catch(() => ({}))).url);
+      if (!to) break;
+      res = await send(new URL(to, full).toString());
+    }
     if (!res.ok && res.status !== 404) throw new Error(`GitHub ${res.status}: ${(await res.text()).slice(0, 300)}`);
     if (res.status === 404) return null;
     return res.status === 204 ? {} : res.json();
@@ -158,7 +168,9 @@ async function publishGithubRelease() {
     console.log(`✔ ${assetName} is already attached to ${tag}`);
   } else {
     console.log(`Uploading ${assetName} (${(bytes.length / 1048576).toFixed(1)} MB)…`);
-    await gh(`https://uploads.github.com/repos/${REPO}/releases/${release.id}/assets?name=${encodeURIComponent(assetName)}`, {
+    // The release's own upload_url (minus its "{?name,label}" template), as GitHub recommends.
+    const uploadUrl = (release.upload_url || `https://uploads.github.com/repos/${REPO}/releases/${release.id}/assets`).replace(/\{.*\}$/, '');
+    await gh(`${uploadUrl}?name=${encodeURIComponent(assetName)}`, {
       method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes,
     });
     console.log(`✔ Attached the installer to ${tag}`);
@@ -217,7 +229,9 @@ async function waitForMac(gh, release, names) {
     release = await gh(`/releases/${release.id}`);
     if (has(release)) { console.log(''); console.log('✔ Mac build attached'); return release; }
     const runs = ((await gh('/actions/workflows/mac.yml/runs?per_page=20')) || {}).workflow_runs || [];
-    const run = runs.find(r => r.head_branch === tag || (r.display_title || '').includes(tag));
+    // A skipped run never built anything, so it doesn't count; a build started by hand runs on main.
+    const run = runs.find(r => r.conclusion !== 'skipped' && (r.head_branch === tag || (r.display_title || '').includes(tag)
+      || (dispatched && r.event === 'workflow_dispatch' && Date.parse(r.created_at) >= started)));
     if (!run && !dispatched && Date.now() - started > 90 * 1000) {
       await gh('/actions/workflows/mac.yml/dispatches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: 'main', inputs: { tag } }) });
       dispatched = true;

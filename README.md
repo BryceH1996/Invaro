@@ -5,9 +5,9 @@
 <p align="center"><strong>Simple invoices for the clients you bill every month.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/BryceH1996/invoicer/releases/latest"><strong>⬇ Download for Windows or Mac</strong></a> ·
-  <a href="https://bryceh1996.github.io/invoicer/">Website</a> ·
-  <a href="https://bryceh1996.github.io/invoicer/privacy.html">Privacy</a>
+  <a href="https://github.com/BryceH1996/Invaro/releases/latest"><strong>⬇ Download for Windows or Mac</strong></a> ·
+  <a href="https://bryceh1996.github.io/Invaro/">Website</a> ·
+  <a href="https://bryceh1996.github.io/Invaro/privacy.html">Privacy</a>
 </p>
 
 Invaro is a small, free app for Windows and Mac. Pick a client, fill in your days or hours, and save a clean PDF invoice. Invaro remembers the rest. Use it on your own, or share the work with your partner or team. There are no ads, no tracking and no analytics.
@@ -17,13 +17,13 @@ Invaro was called **Invoicer** up to version 1.14. If you used it then, it carri
 ## Install
 
 **Windows**
-1. Download `Invaro-Setup-<version>.exe` from the [latest release](https://github.com/BryceH1996/invoicer/releases/latest).
+1. Download `Invaro-Setup-<version>.exe` from the [latest release](https://github.com/BryceH1996/Invaro/releases/latest).
 2. Run it. Invaro isn't code-signed yet, so your browser may say the file "isn't commonly downloaded" (choose **Keep**), and Windows may show "Windows protected your PC" (click **More info → Run anyway**). See [Is it safe?](#is-it-safe)
 
 To remove it, go to **Settings → Apps → Installed apps → Invaro → Uninstall**.
 
 **Mac** (Apple silicon and Intel, macOS 12 Monterey or later)
-1. Download `Invaro-<version>-mac.dmg` from the [latest release](https://github.com/BryceH1996/invoicer/releases/latest), open it, and drag **Invaro** into **Applications**.
+1. Download `Invaro-<version>-mac.dmg` from the [latest release](https://github.com/BryceH1996/Invaro/releases/latest), open it, and drag **Invaro** into **Applications**.
 2. Open Invaro from Applications. Because it isn't signed by Apple, macOS first says it can't check the app for malware. Click **Done**, then open **System Settings → Privacy & Security**, scroll down to "Invaro was blocked…", click **Open Anyway**, and confirm. You only need to do this once.
 
 To remove it, turn off any reminders on the **Notifications** tab first, then drag Invaro from Applications to the Bin.
@@ -72,7 +72,7 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 
 ## Is it safe?
 
-Each [release](https://github.com/BryceH1996/invoicer/releases) lists a **SHA-256 checksum** for every download. To check that your download is exactly the published file, run one of these in the folder you saved it to, and compare the result:
+Each [release](https://github.com/BryceH1996/Invaro/releases) lists a **SHA-256 checksum** for every download. To check that your download is exactly the published file, run one of these in the folder you saved it to, and compare the result:
 
 ```powershell
 Get-FileHash .\Invaro-Setup-<version>.exe     # Windows, in PowerShell
@@ -85,7 +85,7 @@ Releases also link a **VirusTotal** scan of the Windows installer and the Mac di
 
 **What Invaro does on your computer:**
 - **Your data:** it saves your data as plain files on your computer (see [Your data](#your-data)). There's no tracking or analytics, and nothing leaves your computer unless you sign in, join a team or set up a backup.
-- **Your account (only if you sign in):** your clients, settings, logos and invoice history are synced to your own account, which only you can read. Your PDFs aren't uploaded. **My details → Account & sync → Delete my cloud data** removes it. See the [privacy policy](https://bryceh1996.github.io/invoicer/privacy.html).
+- **Your account (only if you sign in):** your clients, settings, logos and invoice history are synced to your own account, which only you can read. Your PDFs aren't uploaded. **My details → Account & sync → Delete my cloud data** removes it. See the [privacy policy](https://bryceh1996.github.io/Invaro/privacy.html).
 - **Your team (only if you join one):** the team's clients, invoices and business details are shared with its members, and each person sees only what their role allows. Personal clients and invoices stay on your computer.
 - **Reminders:** while at least one client has a reminder or an invoice is unpaid, it schedules a quick check once a day at 9am. On Windows that's a Task Scheduler task called "Invaro reminders"; on a Mac it's a launch agent called `local.invoicer.reminders`, which also checks when you log in. Turning off your last reminder removes it, and on Windows so does uninstalling.
 - **Updates:** it checks this repository's releases when it starts and every 30 minutes. It only downloads and installs an update when you click **Restart & update**.

@@ -6,7 +6,7 @@
   "author": "Invaro",
   "main": "main.js",
   "private": true,
-  "updateRepo": "BryceH1996/invoicer",
+  "updateRepo": "BryceH1996/Invaro",
   "privateFiles": [
     "SYNC.md",
     ".github/workflows/supabase-keepalive.yml"

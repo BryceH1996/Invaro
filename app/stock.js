@@ -21,7 +21,9 @@ const hasLowLevel = s => s.lowAt !== '' && s.lowAt != null;
 const isLow = (s, left = onHand(s.id)) => hasLowLevel(s) && left <= num(s.lowAt);
 const stockMatches = (s, q) => !q || [s.name, s.sku, s.category, s.supplier].some(v => String(v || '').toLowerCase().includes(q));
 const myEmail = () => (teamState.team && teamState.me) || '';
-const thumb = s => s.image ? `<img class="thumb" src="${esc(s.image)}" alt="">` : `<span class="thumb none" aria-hidden="true">📦</span>`;
+// Only pictures Invaro made itself (a data: JPEG/PNG) are shown, whatever a synced record says.
+const isPic = v => typeof v === 'string' && /^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(v);
+const thumb = s => isPic(s.image) ? `<img class="thumb" src="${esc(s.image)}" alt="">` : `<span class="thumb none" aria-hidden="true">📦</span>`;
 const csvCell = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? '');
 let liveStockRows = []; // the rows under stock lines on the invoice being drafted (renderItems resets it)
 const refreshStockRows = () => liveStockRows.forEach(r => r.update());
@@ -242,7 +244,7 @@ function renderStockForm() {
   $$('[data-price]').forEach(el => { setVal(el, s.prices && s.prices[el.dataset.price] != null ? s.prices[el.dataset.price] : ''); el.disabled = locked; });
   $('#st-title').textContent = s.name || 'Stock item';
   $('#st-from-woo').hidden = !s.wooId;
-  $('#st-pic').innerHTML = s.image ? `<img src="${esc(s.image)}" alt="${esc(s.name)}">` : '<span class="muted">No picture</span>';
+  $('#st-pic').innerHTML = isPic(s.image) ? `<img src="${esc(s.image)}" alt="${esc(s.name)}">` : '<span class="muted">No picture</span>';
   $('#st-pic-add').hidden = locked; $('#st-pic-add').textContent = s.image ? 'Change picture…' : 'Add picture…';
   $('#st-pic-remove').hidden = locked || !s.image;
   renderOnHand(s);

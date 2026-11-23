@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Notification, powerMonitor, 
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
 app.setName('Invaro');
 const IS_MAC = process.platform === 'darwin', IS_WIN = process.platform === 'win32';
@@ -114,6 +115,7 @@ function createWindow(show) {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
       plugins: true, // built-in PDF viewer for the live preview
     },
   });
@@ -154,6 +156,18 @@ ipcMain.handle('data:save', (_e, name, value) => {
   return true;
 });
 
+// What the window may ask the main process to touch. The window shows synced and imported data, so it's
+// treated as untrusted: it can only open, show or read PDFs on this computer (never a program, a network
+// path or another file), and can only write PDFs.
+const isLocalPath = p => typeof p === 'string' && path.isAbsolute(p) && !/^(\\\\|\/\/)/.test(p);
+const isFile = p => { try { return fs.statSync(p).isFile(); } catch (e) { return false; } };
+const isPdfFile = p => isLocalPath(p) && /\.pdf$/i.test(p) && isFile(p);
+const inside = (p, dir) => { const r = path.relative(path.resolve(dir), path.resolve(p)); return !!r && !r.startsWith('..') && !path.isAbsolute(r); };
+function pdfName(n) {
+  n = path.basename(String(n || ''));
+  if (!/^[^\x00-\x1f]+\.pdf$/i.test(n)) throw new Error('Invoices are saved as PDF files.');
+  return n;
+}
 // Errors are returned as { error } so the UI gets a clean message instead of an IPC stack.
 const safe = fn => async (...args) => { try { return await fn(...args); } catch (e) { return { error: e.message || String(e) }; } };
 
@@ -215,6 +229,7 @@ const folderName = s => String(s || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '').re
 // `previous` is where this same invoice was saved before: re-saving it overwrites that file.
 // Any other invoice already using the name is kept, and this one gets `altName` instead.
 ipcMain.handle('pdf:saveToClient', safe((_e, bytes, client, name, altName, previous) => {
+  name = pdfName(name); altName = pdfName(altName);
   const dir = path.join(DATA_DIR, folderName(client));
   fs.mkdirSync(dir, { recursive: true });
   let dest = path.join(dir, name);
@@ -232,11 +247,13 @@ ipcMain.handle('pdf:saveToClient', safe((_e, bytes, client, name, altName, previ
 // suggest each one's number, date, client and total for you to check.
 let unpdfMod = null;
 const unpdf = async () => unpdfMod || (unpdfMod = await import('unpdf'));
+const pickedPdfs = new Set(); // only PDFs you chose in the dialog can be copied in
 ipcMain.handle('import:pickPdfs', safe(async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
     title: 'Choose your old invoices (PDF)', properties: ['openFile', 'multiSelections'], filters: [{ name: 'PDF files', extensions: ['pdf'] }],
   });
   if (canceled) return [];
+  filePaths.forEach(p => pickedPdfs.add(path.resolve(p)));
   const { extractText, getDocumentProxy } = await unpdf();
   const out = [];
   for (const p of filePaths.slice(0, 500)) {
@@ -253,7 +270,8 @@ ipcMain.handle('import:pickPdfs', safe(async () => {
 // Copies an old PDF into its client's folder, keeping its name (… (2).pdf if that's taken).
 ipcMain.handle('import:copyPdf', safe((_e, src, client) => {
   src = String(src || '');
-  if (!/\.pdf$/i.test(src) || !fs.existsSync(src)) throw new Error(`${path.basename(src)} isn't there any more.`);
+  if (!pickedPdfs.has(path.resolve(src))) throw new Error('Choose the PDF with Add old PDFs first.');
+  if (!isPdfFile(src)) throw new Error(`${path.basename(src)} isn't there any more.`);
   const dir = path.join(DATA_DIR, folderName(client));
   fs.mkdirSync(dir, { recursive: true });
   let dest = path.join(dir, path.basename(src));
@@ -264,8 +282,8 @@ ipcMain.handle('import:copyPdf', safe((_e, src, client) => {
 }));
 // A saved PDF's bytes: an imported invoice is previewed and backed up as the PDF it came as.
 ipcMain.handle('pdf:read', safe((_e, p) => {
-  p = String(p || '');
-  if (!/\.pdf$/i.test(p)) throw new Error('Not a PDF');
+  if (!isPdfFile(p) || !inside(p, DATA_DIR)) throw new Error('That PDF is not in your data folder.');
+  if (fs.statSync(p).size > 50 * 1024 * 1024) throw new Error('That PDF is too big to show.');
   return new Uint8Array(fs.readFileSync(p));
 }));
 ipcMain.handle('shell:clientFolder', (_e, client) => {
@@ -388,7 +406,7 @@ function backupTarget(sel) {
     return { provider, online: true, email: gdrive().status().email, name: shared ? `the "${shared}" shared drive` : 'Google Drive',
       shared, parts, root: where, myDrive: findMyDrive(), dir: where, auto: true, ready: true };
   }
-  if (provider === 'other') dir = sel.dir || null;
+  if (provider === 'other') dir = allowedBackupDir(sel.dir);
   else {
     if (provider === 'google' && sel.shared) {
       shared = sel.shared;
@@ -404,6 +422,15 @@ function backupTarget(sel) {
   return { provider, name, shared, parts, root, myDrive: provider === 'google' ? findMyDrive() : undefined, dir, auto: provider !== 'other',
     ready: !!dir && (isDir(dir) || isDir(base)) };
 }
+// "Other folder" backups go only to the folder in your settings, or one you just picked in the dialog.
+const pickedBackupDirs = new Set();
+function allowedBackupDir(dir) {
+  if (!dir || !isLocalPath(dir)) return null;
+  let saved = '';
+  try { saved = JSON.parse(fs.readFileSync(file('settings'), 'utf8')).backupDir || ''; } catch (e) {}
+  const want = path.resolve(dir);
+  return (saved && path.resolve(saved) === want) || pickedBackupDirs.has(want) ? want : null;
+}
 ipcMain.handle('backup:status', (_e, sel) => backupTarget(sel));
 ipcMain.handle('backup:sharedDrives', async () => {
   if (!gdrive().status().connected) return findSharedDrives();
@@ -411,6 +438,7 @@ ipcMain.handle('backup:sharedDrives', async () => {
 });
 // Backups mirror the client folders: <backup folder>\<Client>\<file>.
 ipcMain.handle('backup:write', safe((_e, bytes, name, sel, client) => {
+  name = pdfName(name);
   const t = backupTarget(sel);
   if (t.online) return gdrive().upload({ bytes, name, folders: [...t.parts, folderName(client)], shared: t.shared });
   if (!t.dir) throw new Error(t.provider === 'other' ? 'No backup folder chosen' : `${t.name} isn't installed or signed in`);
@@ -433,7 +461,9 @@ ipcMain.handle('backup:chooseDir', async (_e, sel) => {
     defaultPath: t.dir && isDir(t.dir) ? t.dir : (findMyDrive() || findOneDrive() || app.getPath('documents')),
     properties: ['openDirectory', 'createDirectory'],
   });
-  return canceled || !filePaths[0] ? null : filePaths[0];
+  if (canceled || !filePaths[0]) return null;
+  pickedBackupDirs.add(path.resolve(filePaths[0]));
+  return filePaths[0];
 });
 ipcMain.handle('backup:open', safe(async (_e, sel) => {
   const t = backupTarget(sel);
@@ -541,35 +571,47 @@ async function githubLatest() {
   const r = await res.json();
   // Windows updates with the installer; macOS with the zipped app (the .dmg is for first installs).
   const asset = (r.assets || []).find(a => (IS_MAC ? /-mac\.zip$/i : /\.exe$/i).test(a.name));
-  return asset ? { version: String(r.tag_name).replace(/^v/, ''), notes: r.body || '', source: 'github', asset: asset.browser_download_url, name: asset.name, size: asset.size } : null;
+  if (!asset) return null;
+  const from = new URL(asset.browser_download_url);
+  if (from.protocol !== 'https:' || from.hostname !== 'github.com') throw new Error('The update is not on GitHub.');
+  // GitHub publishes each file's SHA-256; the download must match it.
+  const digest = /^sha256:([0-9a-f]{64})$/i.test(asset.digest || '') ? asset.digest.slice(7).toLowerCase() : '';
+  return { version: String(r.tag_name).replace(/^v/, ''), notes: r.body || '', source: 'github', asset: from.href, name: path.basename(asset.name), size: asset.size, digest };
 }
 // Downloads a release installer to the temp folder, reporting progress to the window.
 async function downloadAsset(u) {
   const res = await fetch(u.asset, { headers: { 'User-Agent': 'Invaro' } });
   if (!res.ok) throw new Error(`Download failed (${res.status}).`);
   const total = Number(res.headers.get('content-length')) || u.size || 0;
-  const dest = path.join(os.tmpdir(), u.name);
-  const out = fs.createWriteStream(dest);
+  const dest = path.join(os.tmpdir(), path.basename(u.name));
+  const out = fs.createWriteStream(dest), sha = crypto.createHash('sha256');
   let got = 0, lastPct = -1;
   for await (const chunk of res.body) {
-    out.write(chunk); got += chunk.length;
+    out.write(chunk); sha.update(chunk); got += chunk.length;
     const pct = total ? Math.floor(got / total * 100) : 0;
     if (pct !== lastPct && win) { lastPct = pct; win.webContents.send('update:progress', pct); }
   }
   await new Promise((ok, bad) => out.end(err => err ? bad(err) : ok()));
   if (total && got !== total) throw new Error('Download was incomplete. Try again.');
+  if (!u.digest) { fs.rmSync(dest, { force: true }); throw new Error("GitHub didn't give a checksum for this update, so it wasn't installed. Download it from the releases page instead."); }
+  if (sha.digest('hex') !== u.digest) { fs.rmSync(dest, { force: true }); throw new Error("The download didn't match GitHub's checksum, so it wasn't installed. Try again."); }
   return dest;
 }
 
 // The newest update from either place (the updates folder or GitHub), or null.
 let offered = null;
+// An installer in the updates folder is only used when it's byte-for-byte the release on GitHub (it saves
+// the download); anything else that turns up there is ignored, since that folder may be shared.
+const sha256File = p => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 async function bestUpdate() {
-  const local = findUpdate();
   const remote = await githubLatest().catch(() => null);
   const newer = remote && compareVersions(remote.version, app.getVersion()) > 0 ? remote : null;
-  if (!local) return newer;
-  if (!newer) return local;
-  return compareVersions(newer.version, local.version) > 0 ? newer : local;
+  if (!newer) return null;
+  const local = findUpdate();
+  if (local && local.version === newer.version && newer.digest) {
+    try { if (sha256File(local.installer) === newer.digest) return local; } catch (e) { /* use the download */ }
+  }
+  return newer;
 }
 ipcMain.handle('update:check', async () => {
   if (!app.isPackaged && !process.env.INVOICER_UPDATE_TEST) return null; // `npm start` is always current
@@ -651,8 +693,8 @@ ipcMain.handle('woo:products', safe(() => woo().products()));
 ipcMain.handle('woo:image', safe((_e, url) => woo().image(url)));
 
 ipcMain.handle('app:version', () => app.getVersion());
-ipcMain.handle('shell:open', (_e, p) => shell.openPath(p));
-ipcMain.handle('shell:show', (_e, p) => shell.showItemInFolder(p));
+ipcMain.handle('shell:open', (_e, p) => isPdfFile(p) ? shell.openPath(path.resolve(p)) : 'Invaro only opens PDF files on this computer.');
+ipcMain.handle('shell:show', (_e, p) => { if (isPdfFile(p)) shell.showItemInFolder(path.resolve(p)); });
 ipcMain.handle('shell:dataDir', () => { fs.mkdirSync(DATA_DIR, { recursive: true }); return shell.openPath(DATA_DIR); });
 
 // ---------- invoice reminders ----------
@@ -897,7 +939,16 @@ ipcMain.handle('reminders:skip', (_e, id) => {
 app.on('second-instance', (_e, argv) => {
   if (argv.includes('--check-reminders')) checkReminders(); else showWindow();
 });
+// Nothing in Invaro needs the camera, microphone, location, notifications from the page and so on: refuse
+// them all. No web contents may open windows or embed webviews.
+app.on('web-contents-created', (_e, contents) => {
+  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  contents.on('will-attach-webview', e => e.preventDefault());
+});
 app.whenReady().then(async () => {
+  const { session } = require('electron');
+  session.defaultSession.setPermissionRequestHandler((_wc, _permission, done) => done(false));
+  session.defaultSession.setPermissionCheckHandler(() => false);
   DATA_DIR = resolveDataDir();
   // 1.6.0 (then called Invoicer) started with Windows to sit in the tray; the scheduled task replaces that.
   if (app.isPackaged && IS_WIN && app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin) app.setLoginItemSettings({ openAtLogin: false, args: ['--hidden'] });

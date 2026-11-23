@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src blob:; object-src blob:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src blob:; object-src blob:; connect-src 'self' blob: data:; base-uri 'none'; form-action 'none'">
 <title>Invaro</title>
 <link rel="stylesheet" href="style.css">
 <script src="../node_modules/jspdf/dist/jspdf.umd.min.js"></script>
@@ -36,7 +36,7 @@
 
     <!-- DASHBOARD -->
     <section data-tab="dashboard">
-      <div class="title-row"><h2>Dashboard</h2><select id="dash-cur" title="Currency"></select></div>
+      <div class="title-row"><h2>Dashboard <button type="button" class="info" aria-label="About these figures" aria-expanded="false">i</button><span class="tip" hidden>Invoiced goes by each invoice's date, paid by the day you marked it paid. Quotes aren't counted.</span></h2><select id="dash-cur" title="Currency"></select></div>
       <p class="muted" id="dash-sub"></p>
       <div class="tiles" id="dash-tiles"></div>
       <div class="card">
@@ -76,7 +76,7 @@
         <div><label id="lbl-date">Invoice date</label><input id="inv-date" type="date"></div>
         <div><label id="lbl-due">Due date</label><input id="inv-due" type="date"></div>
       </div>
-      <h3>Line items</h3>
+      <h3>Line items <button type="button" class="info" aria-label="About line items" aria-expanded="false">i</button><span class="tip" hidden>Hours, days and days off are priced from the client's rates. Lines that come to zero are left off the PDF.</span></h3>
       <label class="check" title="Untick to leave the hourly, daily and unit rates off the PDF, showing only quantities and amounts"><input type="checkbox" id="inv-show-rates"> Show rates on the PDF</label>
       <div class="items" id="inv-items"></div>
       <div class="actions">
@@ -95,8 +95,8 @@
         <button class="btn primary" id="download">Save invoice</button>
         <button class="btn" id="open-client-folder" title="Open this client's invoice folder">Client folder</button>
         <button class="btn" id="reset-draft">Start fresh</button>
+        <button type="button" class="info" aria-label="What saving does" aria-expanded="false">i</button><span class="tip" hidden>Saves the PDF in the client's folder, adds it to History and moves on to the next number. An invoice (not a quote) takes its stock items off what's on hand.</span>
       </div>
-      <p class="muted">Hours, days and days off are priced from the client's rates. Lines that come to zero are left off the PDF. Saving puts the PDF in this client's own folder inside Invaro's data folder, records it in History and starts the next invoice with the following number. Saving an invoice takes its stock items off what's on hand; quotes don't.</p>
       <dialog id="stock-dlg" class="folder-dlg stock-dlg">
         <h3>Add from stock</h3>
         <p class="muted" id="stock-dlg-cur"></p>
@@ -168,19 +168,17 @@
         </div>
         <datalist id="st-units"><option value="m"><option value="kg"><option value="box"><option value="pack"><option value="litre"><option value="roll"><option value="m²"></datalist>
         <datalist id="st-cats"></datalist><datalist id="st-sups"></datalist>
-        <h3>Prices</h3>
+        <h3>Prices <button type="button" class="info" aria-label="About prices" aria-expanded="false">i</button><span class="tip" hidden>An invoice or quote uses the price in its client's currency. Leave a currency blank if you don't sell in it; you can still type a price on the line.</span></h3>
         <div class="row" id="st-prices"></div>
-        <p class="muted">Adding the item to an invoice or quote uses its price in that client's currency. Leave a currency blank if you don't sell in it; you can still type a price on the line.</p>
         <div class="row three">
-          <div><label>Cost price (what you pay)</label><input data-st="cost" type="number" step="0.01" min="0"></div>
+          <div><label>Cost price <button type="button" class="info" aria-label="About cost price" aria-expanded="false">i</button><span class="tip" hidden>Never printed. Used to value your stock on hand.</span></label><input data-st="cost" type="number" step="0.01" min="0"></div>
           <div><label>Cost currency</label><select data-st="costCurrency"></select></div>
           <div><label>Low stock at</label><input data-st="lowAt" type="number" step="any" min="0" placeholder="No warning"></div>
         </div>
-        <p class="muted">The cost price is never printed. It's used for the value of your stock on hand.</p>
         <label>Notes (not printed)</label><textarea data-st="notes" rows="2"></textarea>
         <h3>Stock history</h3>
         <table class="stock-moves" id="st-moves"><thead><tr><th>Date</th><th>What</th><th class="num">Change</th></tr></thead><tbody></tbody></table>
-        <p class="muted" id="st-moves-empty">No changes yet. Use Counted or Received above to set how many you have.</p>
+        <p class="muted" id="st-moves-empty">No changes yet. Use Counted or Received to set how many you have.</p>
         <div class="actions">
           <button class="btn danger" id="st-remove" type="button">Remove item</button>
           <button class="btn" id="st-restore" type="button" hidden>Put back in stock</button>
@@ -193,17 +191,16 @@
       <div class="stock-more">
       <div id="st-import-box" class="stock-more-pair">
         <div class="card">
-        <h3>Import from a spreadsheet</h3>
-        <p class="muted">Add new items and update existing ones from a CSV file (in Excel: File → Save As → CSV). Rows are matched to your items by code, or by name when there's no code. Empty cells leave things as they are. Columns: Code, Item, Category, Supplier, Unit, On hand, Low stock level, Cost, Cost currency, Price GBP / USD / EUR / ZAR (or just Price) and Notes. You see every change before anything is saved.</p>
+        <h3>Import from a spreadsheet <button type="button" class="info" aria-label="About importing stock" aria-expanded="false">i</button><span class="tip" hidden>Add or update items from a CSV or Excel file. Rows match your items by code, or by name when there's no code, and empty cells change nothing. Columns: Code, Item, Category, Supplier, Unit, On hand, Low stock level, Cost, Cost currency, Price (or Price GBP / USD / EUR / ZAR) and Notes. You see every change before it's saved.</span></h3>
         <div class="actions">
           <button class="btn" id="st-import" type="button">Import CSV…</button>
           <button class="btn" id="st-template" type="button">Download a template</button>
-          <input type="file" id="st-file" accept=".csv,.txt,.tsv,text/csv" hidden>
+          <input type="file" id="st-file" accept=".csv,.xlsx,.txt,.tsv,text/csv" hidden>
         </div>
         </div>
 
         <div id="woo-box" class="card" hidden>
-          <h3>Your WooCommerce shop</h3>
+          <h3>Your WooCommerce shop <button type="button" class="info" aria-label="About WooCommerce" aria-expanded="false">i</button><span class="tip" hidden>Brings in your products' names, codes, categories, prices, stock levels and pictures. Invaro only reads from your shop, and the key stays on this computer.</span></h3>
           <p class="drive-status" id="woo-status"></p>
           <div id="woo-on" class="actions">
             <button class="btn primary" id="woo-import" type="button">Import from WooCommerce</button>
@@ -211,7 +208,7 @@
             <button class="btn" id="woo-disconnect" type="button">Disconnect</button>
           </div>
           <div id="woo-form">
-            <p class="muted">Bring your shop's products in with their names, codes, categories, prices, stock levels and pictures. In WordPress, go to WooCommerce → Settings → Advanced → REST API → Add key, choose <b>Read</b> permissions, and copy the key and secret here. Invaro only reads from your shop; the key stays on this computer.</p>
+            <p class="muted">Needs a read-only REST API key <button type="button" class="info" aria-label="How to make the key" aria-expanded="false">i</button><span class="tip" hidden>In WordPress: WooCommerce → Settings → Advanced → REST API → Add key. Choose <b>Read</b> permissions, then copy the consumer key and secret here.</span></p>
             <label for="woo-site">Website address</label><input id="woo-site" placeholder="https://shop.example.com" spellcheck="false" autocomplete="off">
             <div class="row">
               <div><label for="woo-key">Consumer key</label><input id="woo-key" placeholder="ck_…" spellcheck="false" autocomplete="off"></div>
@@ -226,9 +223,8 @@
       </div>
 
       <div class="card">
-      <h3>Stock on invoices</h3>
+      <h3>Stock on invoices <button type="button" class="info" aria-label="How invoices use stock" aria-expanded="false">i</button><span class="tip" hidden>Saving an invoice takes its stock items off what's on hand. Editing it changes only the difference, and removing it from History puts them back. Quotes take nothing until they become an invoice.</span></h3>
       <label class="check"><input type="checkbox" id="st-show-sku"> Show item codes on invoices and quotes</label>
-      <p class="muted">Saving an invoice takes its stock items off what's on hand. Editing it later changes only the difference, and removing it from History puts the items back. Quotes don't take stock until they're made into an invoice.</p>
       <div class="actions"><button class="btn" id="st-csv" type="button">Export stock list (CSV)</button></div>
       </div>
       </div>
@@ -268,7 +264,7 @@
           <div><label>Email (not printed)</label><input data-cl="email" type="email" spellcheck="false"></div>
         </div>
         <label>Address (one line per row)</label><textarea data-cl="address" rows="4"></textarea>
-        <h3>Billing</h3>
+        <h3>Billing <button type="button" class="info" aria-label="About billing" aria-expanded="false">i</button><span class="tip" hidden>Rates are in the client's currency. Hours and days on invoices are priced from them.</span></h3>
         <div class="row">
           <div><label>Currency</label><select data-cl="currency" id="cl-currency"></select></div>
           <div><label>Payment terms (days)</label><input data-cl="dueDays" type="number" min="0"></div>
@@ -276,9 +272,8 @@
         <div class="row three">
           <div><label>Hourly rate</label><input data-cl="hourlyRate" type="number" step="0.01" min="0"></div>
           <div><label>Daily rate</label><input data-cl="dailyRate" type="number" step="0.01" min="0"></div>
-          <div><label>Day off reduction</label><input data-cl="dayOffRate" type="number" step="0.01" min="0" placeholder="= daily rate"></div>
+          <div><label>Day off reduction <button type="button" class="info" aria-label="About day off reduction" aria-expanded="false">i</button><span class="tip" hidden>Taken off for each day off. Leave it blank to use the daily rate.</span></label><input data-cl="dayOffRate" type="number" step="0.01" min="0" placeholder="= daily rate"></div>
         </div>
-        <p class="muted">Rates are in the client's currency. Day off reduction is subtracted per day off; leave it blank to use the daily rate.</p>
         <div class="row">
           <div><label>Client's VAT number (optional)</label><input data-cl="vatNumber"></div>
           <div><label>Tax rate to charge (%)</label><input data-cl="taxRate" type="number" step="0.01" min="0" placeholder="0 = no tax line"></div>
@@ -297,21 +292,20 @@
     <!-- ME -->
     <section data-tab="me">
       <h2>My details</h2>
-      <h3 id="account">Account &amp; sync</h3>
+      <h3 id="account">Account &amp; sync <button type="button" class="info" aria-label="About signing in" aria-expanded="false">i</button><span class="tip" hidden>Sign in with Google to keep your clients, stock, settings, logos and history in your own private account and use them on your other computers. PDF files stay on each computer.</span></h3>
       <p class="drive-status" id="cloud-status">Checking…</p>
-      <p class="muted">Sign in with Google to keep your clients, settings, logos and invoice history in your own private account, and use them on your other computers. Your PDF files stay on this computer. <a href="https://bryceh1996.github.io/Invaro/privacy.html" id="privacy-link">Privacy policy</a></p>
       <div class="actions">
         <button class="btn primary" id="cloud-signin">Sign in with Google</button>
         <button class="btn" id="cloud-cancel" hidden>Cancel</button>
         <button class="btn" id="cloud-sync" hidden>Sync now</button>
         <button class="btn" id="cloud-signout" hidden>Sign out</button>
         <button class="btn danger" id="cloud-delete" hidden>Delete my cloud data</button>
+        <a class="privacy-link" href="https://bryceh1996.github.io/Invaro/privacy.html" id="privacy-link">Privacy policy</a>
       </div>
       <div id="team-box" class="share-box" hidden>
-        <h4 id="team-title">Work together</h4>
+        <h4><span id="team-title">Work together</span> <button type="button" class="info" aria-label="About your team" aria-expanded="false">i</button><span class="tip" id="team-help" hidden></span></h4>
         <p class="drive-status" id="team-notice" hidden></p>
         <div id="team-invited"></div>
-        <p class="muted" id="team-help"></p>
         <div id="team-none" class="share-add">
           <input id="team-name" placeholder="Team name, e.g. your company" autocomplete="off">
           <button class="btn" id="team-create" type="button">Create a team</button>
@@ -360,11 +354,10 @@
         <div><label>Phone</label><input data-me="phone"></div>
       </div>
       <div class="row three">
-        <div><label>VAT number</label><input data-me="vatNumber"></div>
+        <div><label>VAT number <button type="button" class="info" aria-label="About these numbers" aria-expanded="false">i</button><span class="tip" hidden>Only the numbers you fill in are printed on your invoices.</span></label><input data-me="vatNumber"></div>
         <div><label>Tax number</label><input data-me="taxNumber"></div>
         <div><label>Company reg. number</label><input data-me="regNumber"></div>
       </div>
-      <p class="muted">Only the numbers you fill in are printed on your invoices.</p>
       <label>Payment details / notes (printed under the total, optional)</label>
       <textarea data-me="notes" rows="4" placeholder="Bank: ...&#10;Account: ..."></textarea>
 
@@ -372,7 +365,7 @@
       <label class="check"><input type="checkbox" data-bank="enabled"> Show banking details at the bottom of my invoices</label>
       <div id="bank-form">
         <div class="row">
-          <div><label>Bank</label><select id="bank-pick"></select></div>
+          <div><label>Bank <button type="button" class="info" aria-label="About choosing a bank" aria-expanded="false">i</button><span class="tip" hidden>Picking a South African bank fills in its branch and SWIFT codes from public lists. Check them against a bank statement.</span></label><select id="bank-pick"></select></div>
           <div><label>Bank name (as printed)</label><input data-bank="bankName"></div>
         </div>
         <div class="row">
@@ -393,7 +386,6 @@
             <button class="btn" id="bank-logo-remove" hidden>Remove</button>
           </div>
         </div>
-        <p class="muted">Choosing a South African bank fills in its universal branch code and SWIFT code from public lists. Check them against your bank statement. Your bank's logo is your own copy, saved in your data folder.</p>
       </div>
 
       <h3>Invoice design</h3>
@@ -405,7 +397,7 @@
         <label>Colour two <span class="muted" id="design-two-what"></span></label>
         <div class="swatches" id="design-swatches2"></div>
       </div>
-      <label>Logo</label>
+      <label>Logo <button type="button" class="info" aria-label="About your logo" aria-expanded="false">i</button><span class="tip" hidden>PNG, JPG, WebP or SVG. A transparent background looks best on every template.</span></label>
       <div class="logo-row">
         <div class="logo-box" id="logo-box"><span class="muted">No logo</span></div>
         <div class="actions">
@@ -413,7 +405,6 @@
           <button class="btn" id="logo-remove" hidden>Remove</button>
         </div>
       </div>
-      <p class="muted">PNG, JPG, WebP or SVG. A logo with a transparent background looks best on every template.</p>
       <h3>Invoice settings</h3>
       <div class="row">
         <div><label>Invoice number prefix</label><input data-set="prefix"></div>
@@ -434,7 +425,7 @@
           <select data-set="pageSize"><option value="letter">Letter</option><option value="a4">A4</option></select></div>
         <div></div>
       </div>
-      <h3>Invoice backup</h3>
+      <h3>Invoice backup <button type="button" class="info" aria-label="About backups" aria-expanded="false">i</button><span class="tip" id="drive-help" hidden></span></h3>
       <div class="row">
         <div><label>Back up to</label>
           <select id="drive-provider"><option value="google">Google Drive</option><option value="onedrive">OneDrive</option><option value="other">Other folder</option></select></div>
@@ -455,7 +446,6 @@
         </div>
       </dialog>
       <p class="drive-status" id="drive-status">Checking…</p>
-      <p class="muted" id="drive-help"></p>
       <div class="actions">
         <button class="btn primary" id="gd-connect" hidden>Connect Google Drive</button>
         <button class="btn primary" id="drive-install" hidden>Get Google Drive for desktop</button>
@@ -465,8 +455,7 @@
         <button class="btn" id="gd-disconnect" hidden>Disconnect Google Drive</button>
       </div>
       <div id="share-box" class="share-box" hidden>
-        <h4>Share your invoices</h4>
-        <p class="muted" id="share-help"></p>
+        <h4>Share your invoices <button type="button" class="info" aria-label="About sharing" aria-expanded="false">i</button><span class="tip" id="share-help" hidden></span></h4>
         <div id="share-online">
           <div class="share-add">
             <input id="share-email" type="email" placeholder="partner@example.com" autocomplete="off" spellcheck="false">
@@ -476,37 +465,32 @@
           <div id="share-list" class="share-list"></div>
         </div>
       </div>
-      <h3>Updates</h3>
+      <h3>Updates <button type="button" class="info" aria-label="About updates" aria-expanded="false">i</button><span class="tip" hidden>Invaro checks GitHub (<span id="upd-repo"></span>) every 30 minutes and shows a bar at the top when an update is ready. Each download is checked against GitHub's checksum before it's installed.</span></h3>
       <p class="drive-status" id="upd-status">Checking…</p>
-      <p class="muted">Invaro checks GitHub (<span id="upd-repo"></span>) for new versions every 30 minutes and shows a bar at the top when one is ready.</p>
       <div class="actions">
         <button class="btn" id="upd-check">Check now</button>
         <button class="btn" id="upd-releases">See all versions</button>
       </div>
-      <h3>Data</h3>
-      <p class="muted">Clients, stock, settings and invoice history are saved as JSON files in:<br><code id="data-dir"></code></p>
+      <h3>Data <button type="button" class="info" aria-label="About your data folder" aria-expanded="false">i</button><span class="tip" hidden>Clients, stock, settings and history are saved here as JSON files. Pick a folder inside OneDrive to have them backed up automatically.</span></h3>
+      <p class="muted"><code id="data-dir"></code></p>
       <div class="actions">
         <button class="btn" id="open-data">Open data folder</button>
         <button class="btn" id="change-data">Change folder…</button>
       </div>
-      <p class="muted">Tip: pick a folder inside OneDrive to have everything backed up automatically.</p>
-      <h3>Moving from another app</h3>
-      <p class="muted">Bring in your customers, products and services, and invoices from QuickBooks, Xero, Sage, Wave, Zoho, FreshBooks or your own spreadsheet. Export each list from the old app as CSV or Excel (.xlsx) and choose it here: Invaro works out what's in it and shows you everything before it's added. Old invoices you only have as PDFs can be added on the History tab.</p>
+      <h3>Moving from another app <button type="button" class="info" aria-label="About importing" aria-expanded="false">i</button><span class="tip" hidden>Customers, products and invoices from QuickBooks, Xero, Sage, Wave, Zoho, FreshBooks or a spreadsheet. Export each list as CSV or Excel and choose it here; you see everything before it's added. Old PDF invoices are added on the History tab.</span></h3>
       <div class="actions"><button class="btn" id="me-import" type="button">Import from another app…</button></div>
     </section>
 
     <!-- NOTIFICATIONS -->
     <section data-tab="notifications">
-      <h2>Notifications</h2>
-      <p class="muted">Pick a day for each client you want reminding about. From that day, your computer shows a notification once a day until you save an invoice for the client (one saved in the week before counts too), or you skip the month.</p>
+      <h2>Notifications <button type="button" class="info" aria-label="About reminders" aria-expanded="false">i</button><span class="tip" hidden>Pick a day for each client. From then, your computer reminds you once a day until you save an invoice for them (one from the week before counts) or skip the month.</span></h2>
       <table class="reminders">
         <thead><tr><th>Client</th><th>Remind me</th><th>This month</th><th>Next reminder</th></tr></thead>
         <tbody id="rem-list"></tbody>
       </table>
       <p class="muted" id="rem-empty">Add a client on the Clients tab first.</p>
-      <h3>While Invaro is closed</h3>
+      <h3>While Invaro is closed <button type="button" class="info" aria-label="About reminders while closed" aria-expanded="false">i</button><span class="tip" id="rem-how" hidden></span></h3>
       <p class="drive-status" id="rem-task">Checking…</p>
-      <p class="muted" id="rem-how"></p>
       <div class="actions">
         <button class="btn" id="rem-test">Send a test notification</button>
         <button class="btn" id="rem-all-off">Turn all reminders off</button>
@@ -515,16 +499,15 @@
 
     <!-- REPORTS -->
     <section data-tab="reports">
-      <div class="title-row"><h2>Reports</h2><div class="rep-tools"><select id="rep-period" title="Period"></select><button class="btn" id="rep-csv">Export to spreadsheet (CSV)</button></div></div>
+      <div class="title-row"><h2>Reports <button type="button" class="info" aria-label="About these figures" aria-expanded="false">i</button><span class="tip" hidden>Totals include VAT. Quotes aren't counted. Rand values use each invoice's own rate, so they don't change as the rand moves. Invoices saved before version 1.12.0 count as paid or outstanding only once you mark them in History.</span></h2><div class="rep-tools"><select id="rep-period" title="Period"></select><button class="btn" id="rep-csv">Export to spreadsheet (CSV)</button></div></div>
       <p class="muted" id="rep-range"></p>
       <details class="card rep-rand" id="rep-rand">
         <summary>Totals in rand (ZAR)</summary>
         <label class="check" title="Paid invoices in another currency are converted at your bank's buying rate (the rand the bank pays for the foreign currency) on the day they're marked paid"><input type="checkbox" id="rep-zar"> Also show what's been paid in rand (ZAR), at a bank's buying rate on the day each invoice was paid</label>
-        <div class="rep-bank" id="rep-bank-row" hidden><label for="rep-bank">Bank</label><select id="rep-bank"><option value="standard">Standard Bank (T/T buying rate)</option><option value="absa">Absa (transfer buying rate)</option><option value="nedbank">Nedbank (cheque &amp; transfer buying rate)</option></select><span class="muted">Marking an invoice paid records every bank's rate that day. Standard Bank also has rates for every past date; Absa and Nedbank only publish today's, so for an invoice marked paid on an earlier day without one, Invaro uses Standard Bank's and says so. FNB, Capitec and Investec don't publish rates Invaro can read.</span></div>
+        <div class="rep-bank" id="rep-bank-row" hidden><label for="rep-bank">Bank</label><select id="rep-bank"><option value="standard">Standard Bank (T/T buying rate)</option><option value="absa">Absa (transfer buying rate)</option><option value="nedbank">Nedbank (cheque &amp; transfer buying rate)</option></select><span><button type="button" class="info" aria-label="About the banks" aria-expanded="false">i</button><span class="tip" hidden>Marking an invoice paid records every bank's rate that day. Standard Bank also has rates for past dates; Absa and Nedbank only publish today's, so an invoice marked paid earlier uses Standard Bank's. FNB, Capitec and Investec don't publish rates Invaro can read.</span></span></div>
       </details>
       <p class="drive-status" id="rep-fx" hidden></p>
       <div id="rep-body"></div>
-      <p class="muted">Totals include VAT/tax. Quotes aren't counted. Rand values use each invoice's own rate, so they stay the same however the rand moves later. Invoices saved before version 1.12.0 have no paid status, so they count as invoiced but not as paid or outstanding until you mark them paid in History.</p>
     </section>
 
     <!-- HISTORY -->
@@ -570,6 +553,7 @@
 </aside>
 <div class="toast" id="toast"><span id="toast-msg"></span><button id="toast-act"></button></div>
 
+<script src="tips.js"></script>
 <script src="pdf.js"></script>
 <script src="renderer.js"></script>
 <script src="stock.js"></script>

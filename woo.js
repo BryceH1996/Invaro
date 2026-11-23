@@ -140,6 +140,7 @@ function createWoo() {
     const type = (res.headers.get('content-type') || '').split(';')[0].trim();
     if (!res.ok) throw new Error(`Couldn't get the picture (${res.status}).`);
     if (!/^image\//.test(type)) throw new Error("That address isn't a picture.");
+    if (Number(res.headers.get('content-length')) > MAX_PICTURE) throw new Error('That picture is too big (over 8 MB).');
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.length > MAX_PICTURE) throw new Error('That picture is too big (over 8 MB).');
     return `data:${type};base64,${buf.toString('base64')}`;

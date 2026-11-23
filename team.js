@@ -119,7 +119,8 @@ function createTeam({ cloud, dataDir, readLocal, writeLocal, onRemoteChange, onS
         if (r.deleted || isReserved(r.data)) { if (i >= 0) list.splice(i, 1); continue; }
         const keep = i >= 0 ? Object.fromEntries(LOCAL_INVOICE.filter(k => k in list[i]).map(k => [k, list[i][k]])) : {};
         if (r.by && r.by !== me().email) keep.savedBy = r.by; else delete keep.savedBy;
-        const entry = { ...r.data, ...keep };
+        // Where a PDF is saved and backed up is this computer's business: never taken from someone else's record.
+        const entry = { ...omit(r.data, LOCAL_INVOICE), ...keep };
         if (i >= 0) list[i] = entry; else list.push(entry);
       }
       list.sort((a, b) => String(b.savedAt || '').localeCompare(String(a.savedAt || ''))); // newest first, as in History
@@ -139,7 +140,7 @@ function createTeam({ cloud, dataDir, readLocal, writeLocal, onRemoteChange, onS
       if (!r.deleted) {
         const local = read('settings');
         const kept = Object.fromEntries(LOCAL_SETTINGS.filter(k => k in local).map(k => [k, local[k]]));
-        writeLocal('settings', { ...cloud.takeLogos(r.data), ...kept });
+        writeLocal('settings', { ...omit(cloud.takeLogos(r.data), LOCAL_SETTINGS), ...kept }); // this computer's own settings stay its own
       }
     }
     return [...kinds].map(k => FILE_OF[k]).filter(Boolean);

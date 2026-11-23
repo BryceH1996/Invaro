@@ -176,10 +176,10 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
   function takeLogos(settings) {
     const { _cloudLogos: logos, ...rest } = settings || {};
     for (const [name, b64] of Object.entries(logos || {})) {
-      if (!/^(bank-)?logo\.[a-z]+$/i.test(name)) continue;
+      if (!/^(bank-)?logo\.(png|jpe?g|webp|svg)$/i.test(name)) continue; // only the image types Invaro takes
       const buf = Buffer.from(b64, 'base64'), f = logoFile(name);
       if (!fs.existsSync(f) || !fs.readFileSync(f).equals(buf)) {
-        for (const old of fs.readdirSync(dataDir())) if (old.startsWith(name.split('.')[0] + '.') && old !== name && /^(bank-)?logo\.[a-z]+$/i.test(old)) fs.rmSync(path.join(dataDir(), old), { force: true });
+        for (const old of fs.readdirSync(dataDir())) if (old.startsWith(name.split('.')[0] + '.') && old !== name && /^(bank-)?logo\.(png|jpe?g|webp|svg)$/i.test(old)) fs.rmSync(path.join(dataDir(), old), { force: true });
         fs.writeFileSync(f, buf);
       }
     }

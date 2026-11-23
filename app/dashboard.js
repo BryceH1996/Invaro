@@ -102,7 +102,7 @@ function renderDashboard() {
   sel.innerHTML = curs.map(c => `<option value="${c}">${c} (${esc(curSymbol(c))})</option>`).join('');
   sel.value = dashCur; sel.hidden = curs.length < 2;
   const f = moneyFacts(dashCur), cur = dashCur, M = v => money(v, cur);
-  $('#dash-sub').textContent = `${monthName(f.thisM)} so far · ${cur}. Invoiced goes by invoice date, paid by the day you marked it paid. Quotes aren't counted.`;
+  $('#dash-sub').textContent = `${monthName(f.thisM)} so far · ${cur}`;
   const quotes = openQuotes(cur);
   const tile = (label, value, sub, cls = '', go = '') => `<div class="tile ${cls}"${go ? ` data-go-tab="${go}" role="button" tabindex="0"` : ''}><div class="tile-label">${label}</div><div class="tile-value">${value}</div><div class="tile-sub">${sub || '&nbsp;'}</div></div>`;
   $('#dash-tiles').innerHTML = [

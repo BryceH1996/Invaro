@@ -425,7 +425,7 @@ function refreshPreview(delay = 250) {
 
 // ---------- invoice tab ----------
 function renderClientOptions() {
-  const opts = clients.map(c => `<option value="${c.id}">${c.private ? '🔒 ' : ''}${esc(c.company || '(unnamed)')}</option>`).join('');
+  const opts = clients.map(c => `<option value="${esc(c.id)}">${c.private ? '🔒 ' : ''}${esc(c.company || '(unnamed)')}</option>`).join('');
   $('#inv-client').innerHTML = opts; $('#cl-select').innerHTML = opts;
   $('#inv-client').value = draft.clientId || '';
 }
@@ -1301,6 +1301,19 @@ function renderReports() {
   const table = (head, body) => `<table class="report"><thead><tr>${head.map((h, i) => `<th${i ? ' class="num"' : ''}>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
   const tr = cells => `<tr>${cells.map((c, i) => `<td${i ? ' class="num"' : ''}>${c}</td>`).join('')}</tr>`;
   const label = settings.taxLabel || 'VAT';
+  // With rand on, an amount in another currency shows the rate behind it in brackets: €1000.00 (21.94).
+  // For several paid invoices it's their average (rand ÷ the foreign amount), so it matches the rand
+  // total. Only paid invoices have a rate (the day they were marked paid).
+  const showHome = to && foreign.length;
+  const rateNote = arr => {
+    if (!showHome) return '';
+    const p = arr.filter(isPaid);
+    if (!p.length || p.some(r => r.cur === to || !r.fx)) return '';
+    const amount = sum(p, r => r.total), rand = sum(p, r => r.home.total);
+    if (!amount) return '';
+    const why = p.length === 1 ? `${p[0].h.inv.number}: ${fxLabel(p[0].fx)}` : `Average rand per ${p[0].cur} over ${p.length} paid invoices`;
+    return ` <span class="fx-note" title="${esc(why)}">(${(rand / amount).toFixed(2)})</span>`;
+  };
   // The headline figures, per currency.
   const tile = (l, v, sub) => `<div class="tile"><div class="tile-label">${l}</div><div class="tile-value">${v}</div><div class="tile-sub">${sub}</div></div>`;
   const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
@@ -1308,7 +1321,7 @@ function renderReports() {
     const r = rows.filter(x => x.cur === cur), paid = r.filter(isPaid), owed = r.filter(isOwed);
     return `${byCur.length > 1 ? `<h3>${cur}</h3>` : ''}<div class="tiles rep-tiles">${[
       tile('Invoiced', money(sum(r, x => x.total), cur), plural(r.length, 'invoice')),
-      tile('Paid', money(sum(paid, x => x.total), cur), `${paid.length} of ${r.length} paid`),
+      tile('Paid', money(sum(paid, x => x.total), cur) + rateNote(paid), `${paid.length} of ${r.length} paid`),
       tile('Outstanding', money(sum(owed, x => x.total), cur), owed.length ? plural(owed.length, 'unpaid invoice') : 'Nothing owed'),
       tile(esc(label), money(sum(r, x => x.tax), cur), `on ${money(sum(r, x => x.subtotal), cur)} excl. ${esc(label)}`),
     ].join('')}</div>`;
@@ -1316,7 +1329,6 @@ function renderReports() {
   // What's been paid, all in rand, at each invoice's own rate.
   const home = (arr, f) => arr.some(r => !r.home) ? null : round2(arr.reduce((s, r) => s + f(r.home), 0));
   const homeMoney = v => v == null ? '<span class="muted" title="Waiting for an exchange rate">…</span>' : money(v, to);
-  const showHome = to && foreign.length;
   if (showHome) {
     const paid = rows.filter(isPaid);
     html += `<div class="card"><h3>Paid, in rand (${to})</h3>` + table(['', 'Invoices', 'Excl. ' + label, label, 'Total'],
@@ -1326,13 +1338,13 @@ function renderReports() {
   const clientsIn = [...new Set(rows.map(r => `${r.h.c.company}\u0000${r.cur}`))];
   html += '<div class="rep-grid"><div class="card"><h3>By client</h3>' + table(['Client', 'Invoices', 'Total', 'Paid', 'Outstanding', ...(showHome ? [`Paid in ${to}`] : [])], clientsIn.map(k => {
     const [name, cur] = k.split('\u0000'); const r = rows.filter(x => x.h.c.company === name && x.cur === cur);
-    return tr([esc(name), r.length, money(sum(r, x => x.total), cur), money(sum(r.filter(isPaid), x => x.total), cur),
+    return tr([esc(name), r.length, money(sum(r, x => x.total), cur), money(sum(r.filter(isPaid), x => x.total), cur) + rateNote(r),
       money(sum(r.filter(isOwed), x => x.total), cur), ...(showHome ? [homeMoney(home(r.filter(isPaid), h => h.total))] : [])]);
   }).join('')) + '</div>';
   const months = [...new Set(rows.map(r => r.h.inv.date.slice(0, 7)))].sort();
   html += '<div class="card"><h3>By month</h3>' + table(['Month', ...byCur, ...(showHome ? [`Paid in ${to}`] : [])], months.map(m => {
     const d = parseDate(m + '-01'), inM = rows.filter(x => x.h.inv.date.startsWith(m));
-    return tr([`${MONTHS[d.getMonth()]} ${d.getFullYear()}`, ...byCur.map(cur => money(sum(inM.filter(x => x.cur === cur), x => x.total), cur)),
+    return tr([`${MONTHS[d.getMonth()]} ${d.getFullYear()}`, ...byCur.map(cur => money(sum(inM.filter(x => x.cur === cur), x => x.total), cur) + rateNote(inM.filter(x => x.cur === cur))),
       ...(showHome ? [homeMoney(home(inM.filter(isPaid), h => h.total))] : [])]);
   }).join('')) + '</div></div>';
   // The rate behind each paid invoice in another currency; type a rate in to use your own.
@@ -1343,7 +1355,7 @@ function renderReports() {
       + foreign.sort((a, b) => (a.h.paidAt || '9999').localeCompare(b.h.paidAt || '9999') || a.h.inv.date.localeCompare(b.h.inv.date)).map(r => isPaid(r) ? `<tr>
         <td>${esc(r.h.inv.number)}</td><td>${esc(r.h.paidAt)}</td><td>${esc(r.h.c.company)}</td>
         <td class="num">${money(r.total, r.cur)}</td>
-        <td class="num"><input class="fx-rate" type="number" step="0.0001" min="0" data-fx="${esc(r.h.inv.number)}" value="${r.fx ? r.fx.rate : ''}" placeholder="${fxBusy ? '…' : 'Rate'}" ${editable(r) ? '' : 'readonly title="Only an admin, or whoever saved it, can change the rate on a shared invoice"'}></td>
+        <td class="num"><input class="fx-rate" type="number" step="0.0001" min="0" data-fx="${esc(r.h.inv.number)}" value="${r.fx && Number(r.fx.rate) > 0 ? Number(r.fx.rate) : ''}" placeholder="${fxBusy ? '…' : 'Rate'}" ${editable(r) ? '' : 'readonly title="Only an admin, or whoever saved it, can change the rate on a shared invoice"'}></td>
         <td class="muted">${esc(fxLabel(r.fx))}${r.fx && r.fx.kind === 'manual' && editable(r) ? ` <button class="link" data-fx-reset="${esc(r.h.inv.number)}" title="Use ${esc(bankName)}'s rate for this date again">Use ${esc(bankName)}'s</button>` : ''}</td>
         <td class="num">${homeMoney(r.home && r.home.total)}</td></tr>` : `<tr class="unpaid">
         <td>${esc(r.h.inv.number)}</td><td class="muted">–</td><td>${esc(r.h.c.company)}</td>
@@ -1443,14 +1455,14 @@ function stepsRow(h) {
   const rows = stepIdx(lines).map(i => {
     const l = lines[i], d = stepPaid(h, i);
     const off = lines[i + 1] && lines[i + 1].discount ? `, less ${lines[i + 1].desc.toLowerCase()}` : '';
-    const box = edit ? `<input type="checkbox" data-step="${i}" data-id="${h.id}" ${d ? 'checked' : ''}>` : `<span>${d ? '✓' : ''}</span>`;
+    const box = edit ? `<input type="checkbox" data-step="${i}" data-id="${esc(h.id)}" ${d ? 'checked' : ''}>` : `<span>${d ? '✓' : ''}</span>`;
     return `<label class="step${d ? ' done' : ''}">${box}<span class="step-desc">${esc(l.desc || '(no description)')}${l.detail || off ? ` <span class="muted">${esc((l.detail || '') + off)}</span>` : ''}</span>
       <span class="num">${esc(money(round2(stepNet(lines, i) * s.factor), cur))}</span>
       <span class="muted step-date">${d ? 'Paid ' + esc(shortDate(d)) : ''}</span></label>`;
   }).join('');
   const all = edit ? (s.paidCount === s.count
-    ? `<button class="link" data-act="steps-none" data-id="${h.id}">Clear all</button>`
-    : `<button class="link" data-act="steps-all" data-id="${h.id}">Mark all paid</button>`) : '';
+    ? `<button class="link" data-act="steps-none" data-id="${esc(h.id)}">Clear all</button>`
+    : `<button class="link" data-act="steps-all" data-id="${esc(h.id)}">Mark all paid</button>`) : '';
   return `<tr class="steps-row"><td colspan="7"><div class="steps">
     ${rows}
     <div class="steps-sum"><span>Paid <b>${esc(money(s.paid, cur))}</b> of ${esc(money(h.total, cur))} · Outstanding <b>${esc(money(s.outstanding, cur))}</b></span>${all}</div>
@@ -1510,22 +1522,22 @@ function renderHistory() {
   if (histPick && !invoices.some(h => h.id === histPick)) histPick = null;
   const make = can('createInvoices'); // an accountant only opens and saves the PDFs
   const backupCell = h => h.backup
-    ? `<button class="link ok" data-act="drive" data-id="${h.id}" title="Backed up to ${esc(h.backup)}. Click to show it.">✓</button>`
+    ? `<button class="link ok" data-act="drive" data-id="${esc(h.id)}" title="Backed up to ${esc(h.backup)}. Click to show it.">✓</button>`
     : h.backupError !== undefined
-      ? `<button class="link warn" data-act="backup" data-id="${h.id}" title="Not backed up: ${esc(h.backupError)}. Click to retry.">⚠ Retry</button>`
+      ? `<button class="link warn" data-act="backup" data-id="${esc(h.id)}" title="Not backed up: ${esc(h.backupError)}. Click to retry.">⚠ Retry</button>`
       : '<span class="muted" title="Not backed up">–</span>';
   const statusCell = h => {
     const st = payStatus(h);
     const btn = docType(h) === 'quote'
-      ? `<button class="link" data-act="steps" data-id="${h.id}" title="Tick off each line of this quote as it's paid">${openSteps.has(h.id) ? 'Hide payments' : 'Payments'}</button>`
+      ? `<button class="link" data-act="steps" data-id="${esc(h.id)}" title="Tick off each line of this quote as it's paid">${openSteps.has(h.id) ? 'Hide payments' : 'Payments'}</button>`
       : !can('markPaid') ? ''
-        : h.paidAt ? `<button class="link" data-act="unpaid" data-id="${h.id}">Undo</button>`
-          : `<button class="link" data-act="paid" data-id="${h.id}">Mark paid</button>`;
+        : h.paidAt ? `<button class="link" data-act="unpaid" data-id="${esc(h.id)}">Undo</button>`
+          : `<button class="link" data-act="paid" data-id="${esc(h.id)}">Mark paid</button>`;
     return `<span class="status ${st.key}">${esc(st.label)}</span> ${btn}`;
   };
   $('#hist-empty').textContent = teamState.team && !can('seeAllInvoices') ? "You haven't saved any invoices yet. As a team member, you see only the invoices and quotes you make." : 'No invoices saved yet.';
   $('#hist').innerHTML = invoices.map(h =>
-    `<tr data-pick="${h.id}" tabindex="0" class="${h.id === histPick ? 'on' : ''}"><td>${esc(h.inv.number)}${h.savedBy ? `<div class="muted" title="Saved by ${esc(h.savedBy)}">by ${esc(h.savedBy.split('@')[0])}</div>` : ''}${h.private ? '<div class="muted" title="Personal: not shared with a team">🔒 Personal</div>' : ''}</td>
+    `<tr data-pick="${esc(h.id)}" tabindex="0" class="${h.id === histPick ? 'on' : ''}"><td>${esc(h.inv.number)}${h.savedBy ? `<div class="muted" title="Saved by ${esc(h.savedBy)}">by ${esc(h.savedBy.split('@')[0])}</div>` : ''}${h.private ? '<div class="muted" title="Personal: not shared with a team">🔒 Personal</div>' : ''}</td>
      <td>${esc(h.c.company)}${h.imported ? `<div class="muted" title="Imported from ${esc(h.imported.from)}">Imported</div>` : ''}</td><td>${esc(h.inv.date)}</td>
      <td class="num">${esc(money(h.total, h.c.currency))}</td>
      <td>${statusCell(h)}</td><td class="num">${backupCell(h)}</td></tr>`
@@ -1538,14 +1550,14 @@ function renderHistory() {
   bar.innerHTML = `<div class="hist-sel-what"><b>${esc(h.inv.number)}</b> · ${esc(h.c.company)} · ${esc(money(h.total, h.c.currency))}
       <span class="muted">${h.file ? esc(h.file.split(/[\\/]/).pop()) : desk ? 'Saved on another computer' : ''}</span></div>
     <div class="hist-sel-acts">
-    ${h.file && desk ? `<button class="btn" data-act="open" data-id="${h.id}">Open</button><button class="btn" data-act="folder" data-id="${h.id}" title="Show the PDF in its folder">Show in folder</button>` : ''}
-    ${oldPdf ? '' : h.file || !desk ? (make ? `<button class="btn" data-act="pdf" data-id="${h.id}" title="Save this again (e.g. after editing your details)">Re-save</button>` : '')
-      : `<button class="btn" data-act="pdf" data-id="${h.id}" title="Saved on another computer. Make the PDF on this one too.">Save PDF here</button>`}
-    ${make ? `${oldPdf ? '' : `<button class="btn" data-act="edit" data-id="${h.id}" title="Change this ${what} and save it again under the same number">Edit</button>`}
-      <button class="btn" data-act="copy" data-id="${h.id}" title="Start a new invoice with these lines">Copy</button>
-      ${what === 'quote' ? `<button class="btn" data-act="convert" data-id="${h.id}" title="Start an invoice from this quote">Make invoice</button>` : ''}
-      <button class="btn" data-act="private" data-id="${h.id}" title="${h.private ? 'Share this with your team' : 'Keep this off your team'}">${h.private ? 'Share' : 'Make personal'}</button>
-      <button class="btn danger" data-act="del" data-id="${h.id}" title="Remove from history">Remove</button>` : ''}
+    ${h.file && desk ? `<button class="btn" data-act="open" data-id="${esc(h.id)}">Open</button><button class="btn" data-act="folder" data-id="${esc(h.id)}" title="Show the PDF in its folder">Show in folder</button>` : ''}
+    ${oldPdf ? '' : h.file || !desk ? (make ? `<button class="btn" data-act="pdf" data-id="${esc(h.id)}" title="Save this again (e.g. after editing your details)">Re-save</button>` : '')
+      : `<button class="btn" data-act="pdf" data-id="${esc(h.id)}" title="Saved on another computer. Make the PDF on this one too.">Save PDF here</button>`}
+    ${make ? `${oldPdf ? '' : `<button class="btn" data-act="edit" data-id="${esc(h.id)}" title="Change this ${what} and save it again under the same number">Edit</button>`}
+      <button class="btn" data-act="copy" data-id="${esc(h.id)}" title="Start a new invoice with these lines">Copy</button>
+      ${what === 'quote' ? `<button class="btn" data-act="convert" data-id="${esc(h.id)}" title="Start an invoice from this quote">Make invoice</button>` : ''}
+      <button class="btn" data-act="private" data-id="${esc(h.id)}" title="${h.private ? 'Share this with your team' : 'Keep this off your team'}">${h.private ? 'Share' : 'Make personal'}</button>
+      <button class="btn danger" data-act="del" data-id="${esc(h.id)}" title="Remove from history">Remove</button>` : ''}
     </div>`;
 }
 function pickHistory(id) {

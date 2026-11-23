@@ -12,7 +12,8 @@ const round2 = n => Math.round(n * 100) / 100;
 const store = window.api || {
   async load() {
     const g = k => { try { return JSON.parse(localStorage.getItem('invoicer.' + k)); } catch (e) { return null; } };
-    return { clients: g('clients') || [], settings: g('settings') || { me: {}, prefix: 'INV-', nextNumber: 1, pageSize: 'letter' }, invoices: g('invoices') || [], dataDir: '(browser storage)' };
+    return { clients: g('clients') || [], settings: g('settings') || { me: {}, prefix: 'INV-', nextNumber: 1, pageSize: 'letter' }, invoices: g('invoices') || [],
+      stock: g('stock') || [], stockmoves: g('stockmoves') || [], dataDir: '(browser storage)' };
   },
   async save(k, v) { localStorage.setItem('invoicer.' + k, JSON.stringify(v)); },
   async saveInvoice(bytes, client, name) {
@@ -22,6 +23,8 @@ const store = window.api || {
 };
 
 let clients = [], settings = {}, invoices = [], draft = null, dataDir = '';
+let stock = [], stockMoves = []; // stock items, and every change to their counts (see "stock" below)
+const dataOf = name => ({ clients, settings, invoices, stock, stockmoves: stockMoves }[name]);
 
 // ---------- persistence (debounced per file) ----------
 const timers = {};
@@ -32,7 +35,7 @@ function persist(name) {
   clearTimeout(timers[name]);
   timers[name] = setTimeout(() => {
     timers[name] = null;
-    const value = { clients, settings, invoices }[name];
+    const value = dataOf(name);
     base[name] = clone(value);
     store.save(name, value).catch(e => toast('Could not save ' + name + ': ' + e.message));
   }, 300);
@@ -41,8 +44,8 @@ function persist(name) {
 async function flushSaves() {
   const pending = Object.keys(timers).filter(k => timers[k]);
   pending.forEach(k => { clearTimeout(timers[k]); timers[k] = null; });
-  pending.forEach(k => { base[k] = clone({ clients, settings, invoices }[k]); });
-  await Promise.all(pending.map(k => store.save(k, { clients, settings, invoices }[k])));
+  pending.forEach(k => { base[k] = clone(dataOf(k)); });
+  await Promise.all(pending.map(k => store.save(k, dataOf(k))));
 }
 
 // ---------- pricing ----------
@@ -67,9 +70,11 @@ function lineDetail(it, c) {
   if (it.kind === 'hours') return `${q} ${plural('hr')} @ ${money(c.hourlyRate, cur)}/hr`;
   if (it.kind === 'days') return `${q} ${plural('day')} @ ${money(c.dailyRate, cur)}/day`;
   if (it.kind === 'daysoff') return `${q} ${plural('day')} × ${money(dayOffRate(c), cur)}`;
-  if (it.kind === 'item') return `${q} × ${money(it.price, cur)}`;
+  if (it.kind === 'item') return `${skuPrefix(it)}${q}${it.unit ? ' ' + it.unit : ''} × ${money(it.price, cur)}`;
   return '';
 }
+// A stock line can show its item code before the quantity, e.g. "DR-200 · 4 × R1,200.00".
+const skuPrefix = it => it.sku && settings.stockShowSku !== false ? `${it.sku} · ` : '';
 // All the lines of an invoice or quote: its priced lines, then any discount on the whole invoice
 // (inv.discount = { pct, reason }) as a last line, a percentage of everything above it, before tax.
 function docLines(inv, c) {
@@ -92,7 +97,7 @@ const discLabel = it => it.disc === 'pct' ? `Discount (${num(it.discValue)}%)` :
 // The detail without the rate, for when rates are hidden: "2.5 hrs", "3 days", "Qty 4".
 function lineBrief(it) {
   const q = num(it.qty), s = (one, many) => `${q} ${q === 1 ? one : many}`;
-  return { hours: s('hr', 'hrs'), days: s('day', 'days'), daysoff: s('day', 'days'), item: `Qty ${q}` }[it.kind] || '';
+  return { hours: s('hr', 'hrs'), days: s('day', 'days'), daysoff: s('day', 'days'), item: skuPrefix(it) + (it.unit ? `${q} ${it.unit}` : `Qty ${q}`) }[it.kind] || '';
 }
 // Lines as they appear on the PDF (zero-value lines dropped). A discount is a line of its own straight
 // under the line it's for, showing the saving, so the total is worked out after it's taken off.
@@ -281,8 +286,10 @@ $('#logo-remove').onclick = async () => {
   await store.removeLogo(); logo = null; settings.logo = ''; persist('settings');
   renderDesign(); refreshPreview(0);
 };
+// A line added from Stock is an item line that also has stockId (and the item's code and unit).
 const normItem = it => ({ kind: KINDS[it.kind] ? it.kind : 'fixed', desc: it.desc || '', qty: it.qty ?? 1, amount: it.amount ?? 0, price: it.price ?? 0,
-  disc: ['pct', 'amt'].includes(it.disc) ? it.disc : '', discValue: it.discValue ?? 0 });
+  disc: ['pct', 'amt'].includes(it.disc) ? it.disc : '', discValue: it.discValue ?? 0,
+  ...(it.stockId && it.kind === 'item' ? { stockId: it.stockId, sku: it.sku || '', unit: it.unit || '' } : {}) });
 
 // ---------- drafts ----------
 const client = id => clients.find(c => c.id === id);
@@ -449,6 +456,7 @@ $('#doc-type').onclick = e => {
 };
 function renderItems() {
   const box = $('#inv-items');
+  liveStockRows = [];
   box.innerHTML = '<div class="hd">Type</div><div class="hd">Description</div><div class="hd">Qty</div><div class="hd">Amount</div><div></div><div></div>';
   const c = client(draft.clientId) || {};
   draft.items.forEach((it, i) => {
@@ -462,6 +470,7 @@ function renderItems() {
     const amt = document.createElement('input'); amt.type = 'number'; amt.step = '0.01';
     const x = document.createElement('button'); x.className = 'x'; x.textContent = '×'; x.title = 'Remove line';
     const pct = document.createElement('button'); pct.className = 'disc-btn'; pct.textContent = '%';
+    const stockRow = it.stockId ? stockLineRow(it) : null;
     // The line's discount, in a row of its own under it: a value, % or a whole amount, and the saving.
     let disc = null;
     if (it.disc) {
@@ -497,6 +506,7 @@ function renderItems() {
     };
     kind.onchange = () => {
       const was = it.kind; it.kind = kind.value;
+      if (it.kind !== 'item' && it.stockId) { delete it.stockId; delete it.sku; delete it.unit; renderItems(); changed(); return; }
       if (!it.desc || it.desc === 'Days off') it.desc = it.kind === 'daysoff' ? 'Days off' : (was === 'daysoff' ? '' : it.desc);
       desc.value = it.desc;
       if (it.kind !== 'fixed' && !num(it.qty)) it.qty = 1;
@@ -506,7 +516,7 @@ function renderItems() {
       sync(); changed();
     };
     desc.oninput = () => { it.desc = desc.value; grow(); changed(); };
-    qty.oninput = () => { it.qty = parseFloat(qty.value) || 0; sync(); changed(); };
+    qty.oninput = () => { it.qty = parseFloat(qty.value) || 0; sync(); if (stockRow) stockRow.update(); changed(); };
     amt.oninput = () => {
       if (it.kind === 'fixed') it.amount = parseFloat(amt.value) || 0;
       else if (it.kind === 'item') { it.price = parseFloat(amt.value) || 0; sync(); }
@@ -517,6 +527,7 @@ function renderItems() {
     sync();
     box.append(kind, desc, qty, amt, pct, x);
     requestAnimationFrame(grow); // once it's on screen and has a width
+    if (stockRow) box.append(stockRow.el);
     if (disc) box.append(disc);
   });
   updateTotal();
@@ -667,12 +678,14 @@ $('#download').onclick = async () => {
     const steps = carryPaidSteps(previous, entry.lines);
     if (steps) entry.paidSteps = steps;
   }
+  if (!stockOkToSave(entry)) return;
   if (teamState.team && !previous && !(await claimNumber(entry))) return;
   const path = await savePdf(entry);
   if (!path) return; // save failed (already reported)
   const idx = invoices.findIndex(h => h.inv.number === entry.inv.number);
   if (idx >= 0) invoices[idx] = entry; else invoices.unshift(entry);
   persist('invoices');
+  settleStock(entry.inv.number, docType(entry) === 'invoice' ? entry.inv.items : []);
   settings.nextNumber = nextNumberValue('invoice');
   settings.nextQuoteNumber = nextNumberValue('quote');
   // Done: back to what you were drafting before the edit, or on to the next one for the same client,
@@ -1496,7 +1509,288 @@ $('#hist').onclick = async e => {
     renderInvoice(); changed(); go('invoice');
   } else if (act === 'del' && confirm(`Remove ${h.inv.number} from history${teamState.team && !h.private ? ` for everyone in ${teamState.team.name}` : ''}? (PDF files are not deleted.)`)) {
     invoices = invoices.filter(x => x.id !== id); persist('invoices'); renderHistory();
+    const back = settleStock(h.inv.number, []);
+    if (back) toast(`${h.inv.number} removed. Its stock (${back}) is back on hand.`);
   }
+};
+
+// ---------- stock (1.25.0) ----------
+// stock: the items you sell, { id, name, sku, unit, category, supplier, cost, costCurrency,
+//   prices: { ZAR: 1200, GBP: 50 } (a price in each currency you bill in), lowAt, notes, removed }.
+// stockMoves: every change to a count, { id, stockId, qty (+ in / − out), at, why, invoice, note, by },
+//   never changed once made. What's on hand is the sum of an item's moves, so two people saving
+//   invoices at the same time (in a team) never clash over a count.
+// Saving an invoice (not a quote) takes its stock lines off; saving it again after an edit moves only
+// the difference; removing it from History puts them back. Removing an item keeps it ("removed"), so
+// old invoices and its history still make sense.
+const MOVE_WHY = { opening: 'Opening stock', received: 'Received', removed: 'Taken out', count: 'Counted', invoice: 'Invoice', returned: 'Back from invoice' };
+const round3 = n => Math.round(n * 1000) / 1000;
+const stockItem = id => stock.find(s => s.id === id);
+const onHand = id => round3(stockMoves.filter(m => m.stockId === id).reduce((t, m) => t + num(m.qty), 0));
+const qtyText = (q, it) => `${round3(q)}${it && it.unit ? ' ' + it.unit : ''}`;
+const priceIn = (it, cur) => { const v = it && it.prices ? it.prices[curCode(cur || '')] : ''; return v === '' || v == null ? null : num(v); };
+const liveItems = () => stock.filter(s => !s.removed);
+const myEmail = () => (teamState.team && teamState.me) || '';
+let liveStockRows = [];
+
+function addMove(stockId, qty, why, extra = {}) {
+  const m = { id: uid(), stockId, qty: round3(qty), at: new Date().toISOString(), why, ...extra };
+  if (myEmail()) m.by = myEmail();
+  stockMoves.push(m);
+  return m;
+}
+// How much of each item an invoice has taken so far (by its number), from its moves.
+function takenBy(number) {
+  const out = {};
+  for (const m of stockMoves) if (m.invoice === number && (m.why === 'invoice' || m.why === 'returned')) out[m.stockId] = round3((out[m.stockId] || 0) - num(m.qty));
+  return out;
+}
+function wantedBy(items) {
+  const out = {};
+  for (const it of items || []) if (it.stockId && it.kind === 'item' && num(it.qty) > 0) out[it.stockId] = round3((out[it.stockId] || 0) + num(it.qty));
+  return out;
+}
+// Brings an invoice's stock moves in line with its lines (items: [] puts everything back).
+// Returns what changed, e.g. "3 m Cable, 1 Door", or '' when nothing did.
+function settleStock(number, items) {
+  const had = takenBy(number), want = wantedBy(items), changes = [];
+  for (const id of new Set([...Object.keys(had), ...Object.keys(want)])) {
+    const diff = round3((want[id] || 0) - (had[id] || 0));
+    if (!diff) continue;
+    addMove(id, -diff, diff > 0 ? 'invoice' : 'returned', { invoice: number });
+    const s = stockItem(id);
+    changes.push(`${qtyText(Math.abs(diff), s)} ${s ? s.name : 'item'}`);
+  }
+  if (changes.length) { persist('stockmoves'); if (tabShown('stock')) renderStock(); liveStockRows.forEach(r => r.update()); }
+  return changes.join(', ');
+}
+// Before saving an invoice: says which items it would take below zero, and asks.
+function stockOkToSave(entry) {
+  if (docType(entry) !== 'invoice') return true;
+  const had = takenBy(entry.inv.number), want = wantedBy(entry.inv.items), short = [];
+  for (const [id, q] of Object.entries(want)) {
+    const s = stockItem(id), left = onHand(id) + (had[id] || 0); // what this invoice already took is still its own
+    if (s && q > left) short.push(`${s.name}: ${qtyText(Math.max(0, left), s)} on hand, ${qtyText(q, s)} on this invoice`);
+  }
+  return !short.length || confirm(`Not enough stock:\n\n${short.join('\n')}\n\nSave the invoice anyway? The stock count goes below zero until you add more.`);
+}
+
+// The row under a stock line on the invoice: its code and what's on hand.
+function stockLineRow(it) {
+  const el = document.createElement('div'); el.className = 'stock-row';
+  const update = () => {
+    const s = stockItem(it.stockId);
+    if (!s) { el.textContent = '📦 Stock item not on this computer'; return; }
+    const own = draft.editing ? takenBy(draft.editing)[s.id] || 0 : 0, left = round3(onHand(s.id) + own);
+    const short = draft.type !== 'quote' && num(it.qty) > left;
+    el.classList.toggle('short', short);
+    el.innerHTML = `📦 ${s.sku ? `<b>${esc(s.sku)}</b> · ` : ''}${esc(qtyText(left, s))} ${own ? `available (${esc(qtyText(own, s))} already on this invoice)` : 'on hand'}${short ? ' · not enough' : s.lowAt !== '' && s.lowAt != null && left <= num(s.lowAt) ? ' · low' : ''}${s.removed ? ' · removed from stock' : ''}`
+      + (draft.type === 'quote' ? ' <span class="muted">(quotes don\'t take stock)</span>' : '');
+  };
+  update();
+  const row = { el, update };
+  liveStockRows.push(row);
+  return row;
+}
+
+// ---------- adding from stock (the picker on the invoice) ----------
+function openStockPicker() {
+  const c = client(draft.clientId) || {};
+  if (!liveItems().length) {
+    toast(can('editStock') ? 'Add your stock items on the Stock tab first' : 'There are no stock items yet', can('editStock') ? 'Stock' : '', can('editStock') ? () => go('stock') : null);
+    return;
+  }
+  $('#stock-dlg-cur').textContent = `Prices in ${curCode(c.currency || '')}`;
+  $('#stock-dlg-q').value = '';
+  renderStockPicker();
+  $('#stock-dlg').showModal();
+  $('#stock-dlg-q').focus();
+}
+const stockMatches = (s, q) => !q || [s.name, s.sku, s.category, s.supplier].some(v => String(v || '').toLowerCase().includes(q));
+function renderStockPicker() {
+  const c = client(draft.clientId) || {}, q = $('#stock-dlg-q').value.trim().toLowerCase();
+  const list = liveItems().filter(s => stockMatches(s, q)).sort((a, b) => a.name.localeCompare(b.name));
+  $('#stock-dlg-list').innerHTML = list.length ? list.map(s => {
+    const p = priceIn(s, c.currency), left = onHand(s.id);
+    return `<button type="button" data-pick="${esc(s.id)}"><span class="pick-name">${esc(s.name)}<small>${esc([s.sku, s.category].filter(Boolean).join(' · '))}</small></span>
+      <span class="pick-qty${left <= 0 ? ' none' : ''}">${esc(qtyText(left, s))}</span><span class="pick-price">${p == null ? '<span class="muted">No price</span>' : esc(money(p, c.currency))}</span></button>`;
+  }).join('') : '<p class="muted">Nothing matches. Try part of the name, code, category or supplier.</p>';
+}
+function addStockLine(id) {
+  const s = stockItem(id), c = client(draft.clientId) || {}; if (!s) return;
+  const p = priceIn(s, c.currency);
+  // An empty line (a new invoice's blank Fixed line) makes way for it.
+  const blank = draft.items.length === 1 && draft.items[0].kind === 'fixed' && !draft.items[0].desc.trim() && !num(draft.items[0].amount);
+  if (blank) draft.items = [];
+  draft.items.push(normItem({ kind: 'item', desc: s.name, qty: 1, price: p ?? 0, stockId: s.id, sku: s.sku, unit: s.unit }));
+  $('#stock-dlg').close();
+  renderItems(); changed();
+  $$('#inv-items input[type=number]').filter(el => el.step === '0.25').pop()?.select(); // the new line's quantity
+  if (p == null) toast(`${s.name} has no price in ${curCode(c.currency || '')}. Type one in on the line.`);
+}
+$('#add-stock').onclick = openStockPicker;
+$('#stock-dlg-q').oninput = renderStockPicker;
+$('#stock-dlg-q').onkeydown = e => { if (e.key === 'Enter') { const b = $('#stock-dlg-list [data-pick]'); if (b) { e.preventDefault(); addStockLine(b.dataset.pick); } } };
+$('#stock-dlg-list').onclick = e => { const b = e.target.closest('[data-pick]'); if (b) addStockLine(b.dataset.pick); };
+$('#stock-dlg-cancel').onclick = () => $('#stock-dlg').close();
+
+// ---------- the Stock tab ----------
+let editingStock = null;
+function initStock() {
+  const cur = Object.keys(CURRENCIES);
+  $('#st-prices').innerHTML = cur.map(k => `<div><label for="st-price-${k}">Price in ${k} (${esc(curSymbol(k))})</label><input id="st-price-${k}" data-price="${k}" type="number" step="0.01" min="0" placeholder="Not sold in ${k}"></div>`).join('');
+  $('[data-st="costCurrency"]').innerHTML = cur.map(k => `<option value="${k}">${k}</option>`).join('');
+  $('#st-show-sku').checked = settings.stockShowSku !== false;
+  $$('[data-price]').forEach(el => el.oninput = () => {
+    const s = stockItem(editingStock); if (!s) return;
+    s.prices ||= {};
+    if (el.value === '') delete s.prices[el.dataset.price]; else s.prices[el.dataset.price] = Number(el.value);
+    persist('stock'); renderStockList();
+  });
+  $$('[data-st]').forEach(el => el.oninput = () => {
+    const s = stockItem(editingStock); if (!s) return;
+    const k = el.dataset.st;
+    s[k] = el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value;
+    persist('stock'); renderStockList();
+    if (k === 'unit' || k === 'sku') refreshStockLines(s);
+    if (k === 'unit') $('#st-adj-unit').textContent = s.unit || '';
+    if (k === 'name') $('#st-title').textContent = s.name || 'Stock item';
+  });
+}
+// A changed code or unit shows on the lines being drafted straight away (saved invoices keep theirs).
+function refreshStockLines(s) {
+  let hit = false;
+  for (const it of draft.items) if (it.stockId === s.id) { it.sku = s.sku || ''; it.unit = s.unit || ''; hit = true; }
+  if (hit) { renderItems(); changed(); }
+}
+function renderStockSync() {
+  const el = $('#st-sync'); if (!el) return;
+  const msg = (teamState.team && teamState.stockError) || (!teamState.team && cloudState.signedIn && cloudState.stockError) || '';
+  el.hidden = !msg; el.textContent = msg;
+}
+function renderStock() {
+  const edit = can('editStock');
+  $('#st-new').hidden = !edit;
+  $('#st-locked').hidden = edit;
+  $('#st-locked').textContent = teamState.team ? `As ${aRole(teamState.team.role)}, you can see ${teamState.team.name}'s stock and add it to invoices and quotes. Only an admin adds items, changes prices or updates counts.` : '';
+  const cats = [...new Set(stock.map(s => s.category).filter(Boolean))].sort();
+  const sel = $('#st-cat'), was = sel.value;
+  sel.innerHTML = '<option value="">All categories</option>' + cats.map(c => `<option>${esc(c)}</option>`).join('');
+  sel.value = cats.includes(was) ? was : '';
+  sel.hidden = !cats.length;
+  $('#st-cats').innerHTML = cats.map(c => `<option value="${esc(c)}">`).join('');
+  $('#st-sups').innerHTML = [...new Set(stock.map(s => s.supplier).filter(Boolean))].sort().map(c => `<option value="${esc(c)}">`).join('');
+  renderStockSync();
+  renderStockList();
+  renderStockForm();
+}
+const isLow = s => s.lowAt !== '' && s.lowAt != null && onHand(s.id) <= num(s.lowAt);
+function renderStockList() {
+  const q = $('#st-search').value.trim().toLowerCase(), cat = $('#st-cat').value;
+  const lowOnly = $('#st-low').checked, showRemoved = $('#st-removed').checked;
+  const list = stock.filter(s => (showRemoved || !s.removed) && (!cat || s.category === cat) && (!lowOnly || isLow(s)) && stockMatches(s, q))
+    .sort((a, b) => (a.removed ? 1 : 0) - (b.removed ? 1 : 0) || String(a.name).localeCompare(String(b.name)));
+  $('#st-empty').hidden = list.length > 0;
+  $('#st-empty').textContent = !stock.length ? (can('editStock') ? 'No stock items yet. Click "+ New item" to add the first one.' : 'No stock items yet.') : 'Nothing matches.';
+  $('#st-table').hidden = !list.length;
+  $('#st-list').innerHTML = list.map(s => {
+    const prices = Object.entries(s.prices || {}).filter(([, v]) => v !== '' && v != null).map(([k, v]) => money(v, k)).join(' · ');
+    const left = onHand(s.id);
+    return `<tr data-id="${esc(s.id)}" class="${s.id === editingStock ? 'on' : ''}${s.removed ? ' removed' : ''}">
+      <td>${esc(s.sku || '')}</td><td>${esc(s.name)}${s.category ? `<div class="muted">${esc(s.category)}</div>` : ''}</td>
+      <td class="num${left <= 0 ? ' none' : isLow(s) ? ' low' : ''}">${esc(qtyText(left, s))}${isLow(s) ? ' <span class="status unpaid">Low</span>' : ''}</td>
+      <td class="num">${prices ? esc(prices) : '<span class="muted">–</span>'}</td></tr>`;
+  }).join('');
+  // What the stock on hand cost you, per currency.
+  const value = {};
+  for (const s of liveItems()) { const left = onHand(s.id); if (left > 0 && num(s.cost)) value[s.costCurrency || 'GBP'] = (value[s.costCurrency || 'GBP'] || 0) + left * num(s.cost); }
+  const parts = Object.entries(value).map(([k, v]) => money(v, k));
+  $('#st-value').textContent = parts.length ? `Stock on hand at cost: ${parts.join(' + ')}` : '';
+}
+function renderStockForm() {
+  const s = stockItem(editingStock);
+  $('#st-form').hidden = !s;
+  if (!s) return;
+  const edit = can('editStock');
+  $$('[data-st]').forEach(el => { setVal(el, s[el.dataset.st] ?? ''); el.disabled = !edit || !!s.removed; });
+  $$('[data-price]').forEach(el => { setVal(el, s.prices && s.prices[el.dataset.price] != null ? s.prices[el.dataset.price] : ''); el.disabled = !edit || !!s.removed; });
+  $('#st-title').textContent = s.name || 'Stock item';
+  const left = onHand(s.id);
+  $('#st-onhand').textContent = `${qtyText(left, s)} on hand${isLow(s) ? ', at or below your low stock level' : ''}`;
+  $('#st-onhand').className = 'drive-status' + (left < 0 ? ' err' : isLow(s) ? ' warn' : ' on');
+  $('#st-adjust').hidden = !edit || !!s.removed;
+  $('#st-adj-unit').textContent = s.unit || '';
+  $('#st-adj-kind').onchange();
+  $('#st-remove').hidden = !edit || !!s.removed;
+  $('#st-restore').hidden = !edit || !s.removed;
+  const moves = stockMoves.filter(m => m.stockId === s.id).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  $('#st-moves-empty').hidden = moves.length > 0;
+  $('#st-moves').hidden = !moves.length;
+  $('#st-moves tbody').innerHTML = moves.slice(0, 200).map(m => {
+    const what = m.invoice ? `${MOVE_WHY[m.why] || m.why} <button class="link" data-inv="${esc(m.invoice)}">${esc(m.invoice)}</button>` : esc(MOVE_WHY[m.why] || m.why);
+    return `<tr><td>${esc(String(m.at).slice(0, 10))}</td><td>${what}${m.note ? `<div class="muted">${esc(m.note)}</div>` : ''}${m.by ? `<div class="muted">by ${esc(m.by.split('@')[0])}</div>` : ''}</td>
+      <td class="num ${num(m.qty) < 0 ? 'out' : 'in'}">${num(m.qty) > 0 ? '+' : ''}${esc(qtyText(m.qty, s))}</td></tr>`;
+  }).join('');
+}
+$('#st-search').oninput = renderStockList;
+$('#st-cat').onchange = renderStockList;
+$('#st-low').onchange = renderStockList;
+$('#st-removed').onchange = renderStockList;
+$('#st-list').onclick = e => {
+  const tr = e.target.closest('tr[data-id]'); if (!tr) return;
+  editingStock = tr.dataset.id; renderStockList(); renderStockForm();
+};
+$('#st-moves').onclick = e => {
+  const n = e.target.dataset.inv; if (!n) return;
+  go('history');
+  const h = invoices.find(x => x.inv.number === n);
+  if (!h) toast(`${n} isn't in your History${teamState.team && !can('seeAllInvoices') ? ' (it was made by someone else in your team)' : ''}.`);
+};
+$('#st-new').onclick = () => {
+  const usual = clients.length ? curCode(clients[0].currency) : 'GBP';
+  const s = { id: uid(), name: 'New item', sku: '', unit: '', category: '', supplier: '', cost: '', costCurrency: usual, prices: {}, lowAt: '', notes: '', createdAt: new Date().toISOString() };
+  stock.push(s); editingStock = s.id; persist('stock');
+  $('#st-search').value = ''; $('#st-low').checked = false;
+  renderStock();
+  $('#st-adj-kind').value = 'count'; $('#st-adj-kind').onchange();
+  $('[data-st="name"]').select();
+};
+$('#st-adj').onclick = () => {
+  const s = stockItem(editingStock); if (!s) return;
+  const kind = $('#st-adj-kind').value, v = parseFloat($('#st-adj-qty').value), note = $('#st-adj-note').value.trim();
+  if (isNaN(v) || v < 0 || (kind !== 'count' && v === 0)) { toast(kind === 'count' ? 'Type how many you counted' : 'Type how many'); $('#st-adj-qty').focus(); return; }
+  const first = !stockMoves.some(m => m.stockId === s.id);
+  const qty = kind === 'received' ? v : kind === 'removed' ? -v : round3(v - onHand(s.id));
+  if (!qty) { toast(`${s.name} is already at ${qtyText(v, s)}`); return; }
+  addMove(s.id, qty, first && kind !== 'removed' ? 'opening' : kind, note ? { note } : {});
+  persist('stockmoves');
+  $('#st-adj-qty').value = ''; $('#st-adj-note').value = '';
+  renderStockList(); renderStockForm(); liveStockRows.forEach(r => r.update());
+  toast(`${s.name}: ${qtyText(onHand(s.id), s)} on hand`);
+};
+$('#st-adj-kind').onchange = () => { $('#st-adj-qty').placeholder = $('#st-adj-kind').value === 'count' ? 'Counted' : 'How many'; };
+$('#st-remove').onclick = () => {
+  const s = stockItem(editingStock); if (!s) return;
+  if (!confirm(`Remove ${s.name} from your stock?\n\nIt's no longer offered on new invoices and quotes. Invoices that already have it, and its stock history, are kept, and you can bring it back with "Show removed items".`)) return;
+  s.removed = true; persist('stock'); renderStock();
+  toast(`${s.name} removed from stock`);
+};
+$('#st-restore').onclick = () => {
+  const s = stockItem(editingStock); if (!s) return;
+  delete s.removed; persist('stock'); renderStock();
+  toast(`${s.name} is back in your stock`);
+};
+$('#st-show-sku').onchange = e => { settings.stockShowSku = e.target.checked; persist('settings'); renderItems(); refreshPreview(); };
+$('#st-csv').onclick = () => {
+  const q = v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+  const cur = Object.keys(CURRENCIES);
+  const lines = [['Code', 'Item', 'Category', 'Supplier', 'Unit', 'On hand', 'Low stock level', 'Cost', 'Cost currency', ...cur.map(k => `Price ${k}`), 'Notes'].join(',')]
+    .concat(liveItems().map(s => [s.sku || '', s.name, s.category || '', s.supplier || '', s.unit || '', onHand(s.id), s.lowAt ?? '', s.cost ?? '', s.costCurrency || '',
+      ...cur.map(k => s.prices && s.prices[k] != null ? s.prices[k] : ''), s.notes || ''].map(q).join(',')));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' }));
+  a.download = `Invaro stock - ${todayIso()}.csv`;
+  a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 };
 
 // ---------- misc ----------
@@ -1515,6 +1809,7 @@ function go(tab) {
   if (tab === 'notifications') renderNotifications();
   if (tab === 'reports') renderReports();
   if (tab === 'history') renderHistory();
+  if (tab === 'stock') renderStock();
   if (tab === 'me' && store.teamRefresh && teamState.signedIn) store.teamRefresh().then(r => r && !r.error && renderTeam(r)); // new invitations
 }
 const tabShown = tab => $(`section[data-tab="${tab}"]`).classList.contains('show');
@@ -1523,7 +1818,8 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
 (async function init() {
   const d = await store.load();
   clients = d.clients; settings = d.settings; invoices = d.invoices; dataDir = d.dataDir;
-  Object.assign(base, clone({ clients, settings, invoices }));
+  stock = d.stock || []; stockMoves = d.stockmoves || [];
+  Object.assign(base, clone({ clients, settings, invoices, stock, stockmoves: stockMoves }));
   $('#cl-currency').innerHTML = Object.entries(CURRENCIES)
     .map(([code, { symbol, name }]) => `<option value="${code}">${code} (${symbol}) – ${name}</option>`).join('');
   let migrated = false;
@@ -1545,6 +1841,7 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
   if (draft.editing && !numberUsed(draft.editing)) delete draft.editing; // removed meanwhile: it saves as a new one
   if (!draft.editing && numberUsed(draft.number)) draft.number = nextInvoiceNumber(draft.type || "invoice");
   editingClient = clients[0]?.id;
+  initStock();
   renderInvoice(); renderClients(); renderMe(); renderHistory(); renderOverdue(); renderZoom(); refreshPreview();
   if (store.version) $('#app-version').textContent = 'v' + await store.version();
   renderUpdates();
@@ -1599,6 +1896,7 @@ const ago = iso => {
 let cloudState = { configured: false };
 function renderCloud(s) {
   cloudState = s || cloudState;
+  renderStockSync();
   const c = cloudState, el = $('#cloud-status'), pill = $('#cloud-pill');
   if (!c.configured) { el.className = 'drive-status'; el.textContent = 'Sign-in is only available in the desktop app.'; $('#cloud-signin').hidden = true; $('#cloud-cancel').hidden = true; pill.hidden = true; return; }
   const waiting = c.busy === 'signing-in';
@@ -1683,6 +1981,12 @@ function mergeRemote({ kinds, data }) {
     invoices = merged; base.invoices = clone(data.invoices);
     if (!same(invoices, data.invoices)) mineToSave.push('invoices');
   }
+  for (const [name, set] of [['stock', v => { stock = v; }], ['stockmoves', v => { stockMoves = v; }]]) {
+    if (!kinds.includes(name) || !data[name]) continue;
+    const merged = mergeList(dataOf(name), base[name], data[name], x => x.id);
+    set(merged); base[name] = clone(data[name]);
+    if (!same(merged, data[name])) mineToSave.push(name);
+  }
   if (kinds.includes('settings')) {
     const before = base.settings || {}, next = { ...data.settings };
     for (const k of new Set([...Object.keys(settings), ...Object.keys(data.settings)])) {
@@ -1707,6 +2011,7 @@ function mergeRemote({ kinds, data }) {
   if (kinds.includes('clients')) { renderClients(); renderInvoice(); }
   if (kinds.includes('settings')) { renderMe(); renderDesign(); renderBank(); renderInvoice(); }
   if (kinds.includes('invoices')) { renderHistory(); renderOverdue(); if (tabShown('reports')) renderReports(); }
+  if (kinds.includes('stock') || kinds.includes('stockmoves')) { liveStockRows.forEach(r => r.update()); if (tabShown('stock')) renderStock(); }
   if (tabShown('notifications')) renderNotifications();
   refreshPreview();
 }
@@ -1736,6 +2041,7 @@ function applyRights() {
   $('#biz-locked').hidden = !locked;
   $('#biz-locked').textContent = locked ? `Your business details, banking, invoice design and numbering are shared by ${teamState.team.name}. Only an admin can change them.` : '';
   renderClients(); renderHistory(); renderOverdue(); renderReminders(lastDue);
+  if (tabShown('stock')) renderStock();
 }
 const inviteMessage = (team, email) => `Hi! I've invited you to "${team}" in Invaro, so we can work on the same clients and invoices.
 
@@ -1744,6 +2050,7 @@ const inviteMessage = (team, email) => `Hi! I've invited you to "${team}" in Inv
 3. Click Join next to the invitation.`;
 function renderTeam(s) {
   teamState = s || teamState;
+  renderStockSync();
   const t = teamState, box = $('#team-box');
   box.hidden = !t.configured || !t.signedIn;
   renderCloud();

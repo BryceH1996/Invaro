@@ -49,6 +49,13 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 - **History:** every saved invoice, ready to open, save again, or copy into a new one.
 - **Edit before you send:** click **Edit** on any saved invoice or quote to change values or add lines, then **Save changes**. It keeps its number, file and paid status, and whatever you were drafting comes back afterwards.
 
+### Stock
+- **Your stock list:** on the **Stock** tab, add the items you sell with a code, unit (each, m, kg, box…), category, supplier, cost price and a selling price in each currency you bill in. Search and filter by category, and see the value of what's on hand at cost.
+- **On quotes and invoices:** click **+ Add from stock** to add an item at its price in the client's currency. You can still change the description, quantity and price on the line. Tick **Show item codes on invoices and quotes** to print the code with each line.
+- **Counts that keep themselves:** saving an invoice takes its items off what's on hand. Editing it later changes only the difference, and removing it from History puts the items back. Quotes don't take stock until they're made into an invoice. Invaro warns you before an invoice takes more than you have.
+- **Receive and count:** record stock received, taken out or counted, with a note. Each item keeps its own history, and you can set a level for a low-stock warning.
+- **In a team:** everyone sees the stock and can add it to invoices and quotes; only admins add items, change prices or update counts.
+
 ### Your look
 - **Nine designs:** Classic, Wave, Minimal, Bold, Elegant, Sidebar, Corporate, Mono and Geometric, in any colour, with a second colour on two-tone designs to match your branding, plus your company logo.
 - **Business details:** your company name, VAT, tax and registration numbers, plus each client's VAT number.

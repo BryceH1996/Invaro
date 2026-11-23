@@ -13,6 +13,7 @@
   <nav>
     <button data-go="invoice" class="active">New invoice</button>
     <button data-go="clients">Clients</button>
+    <button data-go="stock">Stock</button>
     <button data-go="me">My details</button>
     <button data-go="notifications">Notifications</button>
     <button data-go="reports">Reports</button>
@@ -60,6 +61,7 @@
       <div class="items" id="inv-items"></div>
       <div class="actions">
         <button class="btn" id="add-item">+ Add line</button>
+        <button class="btn" id="add-stock" title="Add an item from your stock, at its price in this client's currency">+ Add from stock</button>
         <button class="btn" id="save-default" title="Use these lines as the starting point for this client's next invoice">Save lines as client default</button>
       </div>
       <label class="check"><input type="checkbox" id="inv-disc-on"> Discount on the whole invoice</label>
@@ -74,7 +76,86 @@
         <button class="btn" id="open-client-folder" title="Open this client's invoice folder">Client folder</button>
         <button class="btn" id="reset-draft">Start fresh</button>
       </div>
-      <p class="muted">Hours, days and days off are priced from the client's rates. Lines that come to zero are left off the PDF. Saving puts the PDF in this client's own folder inside Invaro's data folder, records it in History and starts the next invoice with the following number.</p>
+      <p class="muted">Hours, days and days off are priced from the client's rates. Lines that come to zero are left off the PDF. Saving puts the PDF in this client's own folder inside Invaro's data folder, records it in History and starts the next invoice with the following number. Saving an invoice takes its stock items off what's on hand; quotes don't.</p>
+      <dialog id="stock-dlg" class="folder-dlg stock-dlg">
+        <h3>Add from stock</h3>
+        <p class="muted" id="stock-dlg-cur"></p>
+        <input id="stock-dlg-q" placeholder="Search by name, code, category or supplier" autocomplete="off" spellcheck="false">
+        <div class="folder-list stock-pick" id="stock-dlg-list"></div>
+        <div class="actions">
+          <span style="flex:1"></span>
+          <button class="btn" id="stock-dlg-cancel" type="button">Cancel</button>
+        </div>
+      </dialog>
+    </section>
+
+    <!-- STOCK -->
+    <section data-tab="stock">
+      <div class="title-row"><h2>Stock</h2><button class="btn" id="st-new">+ New item</button></div>
+      <p class="drive-status" id="st-locked" hidden></p>
+      <p class="drive-status err" id="st-sync" hidden></p>
+      <div class="stock-filter">
+        <input id="st-search" placeholder="Search by name, code, category or supplier" autocomplete="off" spellcheck="false">
+        <select id="st-cat"></select>
+      </div>
+      <div class="stock-checks">
+        <label class="check"><input type="checkbox" id="st-low"> Low stock only</label>
+        <label class="check"><input type="checkbox" id="st-removed"> Show removed items</label>
+      </div>
+      <table class="stock" id="st-table">
+        <thead><tr><th>Code</th><th>Item</th><th class="num">On hand</th><th class="num">Price</th></tr></thead>
+        <tbody id="st-list"></tbody>
+      </table>
+      <p class="muted" id="st-empty"></p>
+      <p class="muted" id="st-value"></p>
+
+      <div id="st-form" hidden>
+        <h3 id="st-title">Stock item</h3>
+        <p class="drive-status" id="st-onhand"></p>
+        <div class="stock-adjust" id="st-adjust">
+          <select id="st-adj-kind" title="What happened">
+            <option value="received">Received (add)</option>
+            <option value="removed">Taken out (subtract)</option>
+            <option value="count">Counted (set to)</option>
+          </select>
+          <div class="adj-qty"><input id="st-adj-qty" type="number" min="0" step="any" placeholder="How many"><span id="st-adj-unit"></span></div>
+          <input id="st-adj-note" placeholder="Note, e.g. supplier's invoice no.">
+          <button class="btn primary" id="st-adj" type="button">Update stock</button>
+        </div>
+        <div class="row">
+          <div><label>Item name (shown on invoices)</label><input data-st="name"></div>
+          <div><label>Item code / SKU</label><input data-st="sku" placeholder="e.g. DR-200" spellcheck="false"></div>
+        </div>
+        <div class="row three">
+          <div><label>Unit</label><input data-st="unit" list="st-units" placeholder="each"></div>
+          <div><label>Category</label><input data-st="category" list="st-cats"></div>
+          <div><label>Supplier</label><input data-st="supplier" list="st-sups"></div>
+        </div>
+        <datalist id="st-units"><option value="m"><option value="kg"><option value="box"><option value="pack"><option value="litre"><option value="roll"><option value="m²"></datalist>
+        <datalist id="st-cats"></datalist><datalist id="st-sups"></datalist>
+        <h3>Prices</h3>
+        <div class="row" id="st-prices"></div>
+        <p class="muted">Adding the item to an invoice or quote uses its price in that client's currency. Leave a currency blank if you don't sell in it; you can still type a price on the line.</p>
+        <div class="row three">
+          <div><label>Cost price (what you pay)</label><input data-st="cost" type="number" step="0.01" min="0"></div>
+          <div><label>Cost currency</label><select data-st="costCurrency"></select></div>
+          <div><label>Low stock at</label><input data-st="lowAt" type="number" step="any" min="0" placeholder="No warning"></div>
+        </div>
+        <p class="muted">The cost price is never printed. It's used for the value of your stock on hand.</p>
+        <label>Notes (not printed)</label><textarea data-st="notes" rows="2"></textarea>
+        <h3>Stock history</h3>
+        <table class="stock-moves" id="st-moves"><thead><tr><th>Date</th><th>What</th><th class="num">Change</th></tr></thead><tbody></tbody></table>
+        <p class="muted" id="st-moves-empty">No changes yet. Use Counted or Received above to set how many you have.</p>
+        <div class="actions">
+          <button class="btn danger" id="st-remove" type="button">Remove item</button>
+          <button class="btn" id="st-restore" type="button" hidden>Put back in stock</button>
+        </div>
+      </div>
+
+      <h3>Stock on invoices</h3>
+      <label class="check"><input type="checkbox" id="st-show-sku"> Show item codes on invoices and quotes</label>
+      <p class="muted">Saving an invoice takes its stock items off what's on hand. Editing it later changes only the difference, and removing it from History puts the items back. Quotes don't take stock until they're made into an invoice.</p>
+      <div class="actions"><button class="btn" id="st-csv" type="button">Export stock list (CSV)</button></div>
     </section>
 
     <!-- CLIENTS -->
@@ -307,7 +388,7 @@
         <button class="btn" id="upd-releases">See all versions</button>
       </div>
       <h3>Data</h3>
-      <p class="muted">Clients, settings and invoice history are saved as JSON files in:<br><code id="data-dir"></code></p>
+      <p class="muted">Clients, stock, settings and invoice history are saved as JSON files in:<br><code id="data-dir"></code></p>
       <div class="actions">
         <button class="btn" id="open-data">Open data folder</button>
         <button class="btn" id="change-data">Change folder…</button>

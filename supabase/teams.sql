@@ -5,7 +5,8 @@
 --   teams         one row per shared business
 --   team_members  who is in it (one team per person) and their role
 --   team_invites  pending invitations, by email address, with the role they'll get
---   records       the shared data, one row per client / invoice, plus one "business" row (your details)
+--   records       the shared data, one row per client / invoice, plus one "business" row (your details),
+--                 and (from 1.25.0) one row per stock item and per change to a stock count
 --
 -- Roles (from 1.18.0). The database enforces them, not just the app:
 --   admin       everything, plus inviting people, choosing their roles and removing them.
@@ -16,6 +17,11 @@
 --               themselves. Makes invoices and quotes, adds clients and edits their contact details,
 --               but can't change rates, currency, payment terms or tax, delete clients, mark invoices
 --               paid, or change the business details.
+--
+-- Stock (from 1.25.0): only admins add or change stock items ("stock"). Each change to a count is a
+-- "stockmove" row that nobody changes afterwards; anyone who makes invoices adds them (an invoice
+-- takes its items off the shelf). Stock rows are never deleted, so an older Invaro that doesn't know
+-- about stock can't remove them.
 --
 -- Every change to a record gets a new, ever-increasing `version`, so the app can ask for
 -- "everything changed since version N" every few seconds.
@@ -60,7 +66,7 @@ alter table public.team_invites add constraint team_invites_role_check check (ro
 create sequence if not exists public.records_version;
 create table if not exists public.records (
   team_id    uuid not null references public.teams on delete cascade,
-  kind       text not null check (kind in ('client', 'invoice', 'business')),
+  kind       text not null check (kind in ('client', 'invoice', 'business', 'stock', 'stockmove')),
   id         text not null check (length(id) between 1 and 200),
   data       jsonb,
   deleted    boolean not null default false,
@@ -72,6 +78,9 @@ create table if not exists public.records (
 create index if not exists records_team_version on public.records (team_id, version);
 -- Who made each record. A member only sees the invoices they made.
 alter table public.records add column if not exists created_by uuid;
+-- Databases set up before 1.25.0: allow the stock kinds.
+alter table public.records drop constraint if exists records_kind_check;
+alter table public.records add constraint records_kind_check check (kind in ('client', 'invoice', 'business', 'stock', 'stockmove'));
 drop trigger if exists records_stamp on public.records;
 update public.records set created_by = updated_by where created_by is null; -- older rows: the last person to save them
 
@@ -166,10 +175,17 @@ begin
       end if;
     elsif new.kind = 'invoice' and tg_op = 'UPDATE' and not new.deleted and not reserved and not old.deleted then
       new.data := public.keep_keys(new.data, old.data, array['paidAt', 'paidSteps']); -- can't mark paid
+    elsif new.kind = 'stock' then                                 -- stock items are for admins
+      if tg_op = 'INSERT' then return null; end if;
+      new.data := old.data;
     end if;
   elsif r is null and auth.uid() is not null then
     return null;                                                  -- not in the team (RLS stops this anyway)
   end if;                                                         -- (no user at all: the SQL editor, unrestricted)
+  -- A stock move never changes once it's made, whoever sends it again.
+  if new.kind = 'stockmove' and tg_op = 'UPDATE' and auth.uid() is not null then
+    new.data := old.data;
+  end if;
 
   new.updated_at := now();
   new.updated_by := auth.uid();
@@ -224,9 +240,11 @@ drop policy if exists "Add records" on public.records;
 drop policy if exists "Change records" on public.records;
 drop policy if exists "Admins delete records" on public.records;
 create policy "See records" on public.records for select using (public.can_see(team_id, kind, created_by));
-create policy "Add records" on public.records for insert with check (public.is_member(team_id));
+-- Stock rows are never marked deleted (refused, so the app keeps them).
+create policy "Add records" on public.records for insert
+  with check (public.is_member(team_id) and not (deleted and kind in ('stock', 'stockmove')));
 create policy "Change records" on public.records for update
-  using (public.can_see(team_id, kind, created_by)) with check (public.is_member(team_id));
+  using (public.can_see(team_id, kind, created_by)) with check (public.is_member(team_id) and not (deleted and kind in ('stock', 'stockmove')));
 create policy "Admins delete records" on public.records for delete using (public.is_admin(team_id));
 
 -- ---------- actions ----------

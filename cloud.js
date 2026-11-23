@@ -18,7 +18,10 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const NAMES = ['clients', 'settings', 'invoices'];
+// Stock (from 1.25.0) syncs as two more rows. A database whose documents table doesn't take them yet
+// (see SYNC.md) leaves stock on this computer without stopping the rest of the sync.
+const NAMES = ['clients', 'settings', 'invoices', 'stock', 'stockmoves'];
+const OPTIONAL = ['stock', 'stockmoves'];
 const PORT = 47823, REDIRECT = `http://127.0.0.1:${PORT}/auth/callback`;
 const b64url = buf => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
@@ -31,7 +34,7 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
   const key = env.INVOICER_CLOUD_KEY || config.key;
   const statePath = () => path.join(app.getPath('userData'), 'cloud.json');
   let state = load();
-  let busy = null, error = '', pushTimer = null;
+  let busy = null, error = '', pushTimer = null, stockError = '';
 
   // ---------- saved state (session encrypted with the OS keychain / DPAPI) ----------
   function load() {
@@ -51,7 +54,7 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
     return {
       configured: !!(url && key), signedIn: signedIn(), email: state.session?.user?.email || '',
       lastSync: state.lastSync || null, busy, error,
-      pending: NAMES.filter(n => state.files[n]?.dirty).length,
+      pending: NAMES.filter(n => state.files[n]?.dirty && !(stockError && OPTIONAL.includes(n))).length, stockError,
     };
   }
   const report = () => onStatus(status());
@@ -213,8 +216,17 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
       const fsx = fileState(row.name);
       if (row.updated_at === fsx.remoteAt) continue;
       if (fsx.dirty) {
-        // Changed here and elsewhere: keep this computer's version, but save the other one.
         const other = await request(`/rest/v1/documents?select=data&name=eq.${row.name}`);
+        if (row.name === 'stockmoves' && Array.isArray(other?.[0]?.data)) {
+          // Stock moves are only ever added, so both computers' moves are kept (uploaded next).
+          let local = []; try { local = readLocal('stockmoves') || []; } catch (e) {}
+          const have = new Set(local.map(m => m && m.id));
+          const added = other[0].data.filter(m => m && !have.has(m.id));
+          if (added.length) { writeLocal('stockmoves', [...local, ...added]); changed = true; }
+          fsx.remoteAt = row.updated_at;
+          continue;
+        }
+        // Changed here and elsewhere: keep this computer's version, but save the other one.
         const dir = path.join(dataDir(), 'conflicts'); fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(path.join(dir, `${row.name} from the cloud ${new Date().toISOString().replace(/[:.]/g, '-')}.json`), JSON.stringify(other?.[0]?.data ?? null, null, 2));
         fsx.remoteAt = row.updated_at; // our upload replaces it
@@ -225,7 +237,14 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
     return changed;
   }
   async function push() {
-    for (const n of NAMES) if (fileState(n).dirty) await upload(n);
+    stockError = '';
+    for (const n of NAMES) {
+      if (!fileState(n).dirty) continue;
+      try { await upload(n); } catch (e) {
+        if (!OPTIONAL.includes(n) || e.status !== 400) throw e;
+        stockError = `Your stock isn't synced yet: your account's database needs updating for stock (${e.message}). It stays on this computer meanwhile.`;
+      }
+    }
   }
   let again = false;
   async function sync(reason) {
@@ -273,7 +292,7 @@ function createCloud({ config, dataDir, readLocal, writeLocal, onRemoteChange, o
         for (const n of NAMES) { const f = path.join(dataDir(), `${n}.json`); if (fs.existsSync(f)) fs.copyFileSync(f, path.join(backup, `${n}.json`)); }
         for (const n of NAMES) await download(n, false);
       } else {
-        for (const n of NAMES) await upload(n);
+        for (const n of NAMES) { try { await upload(n); } catch (e) { if (!OPTIONAL.includes(n)) throw e; fileState(n).dirty = true; } }
       }
       state.lastSync = new Date().toISOString(); error = ''; save();
       busy = null; report();

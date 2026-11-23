@@ -19,12 +19,21 @@
 //   accountant  sees all clients and invoices; only marks invoices paid or unpaid
 //   member      sees only the invoices they made; makes invoices and adds clients, but can't
 //               change rates and billing, delete clients, mark paid or change the business details
+//
+// Stock (from 1.25.0): stock items are "stock" records, which only admins add or change. Every change
+// to a count is a "stockmove" record of its own, never changed afterwards, so two people saving
+// invoices at once never clash over a count: what's on hand is the sum of the moves. Anyone who makes
+// invoices adds moves (an invoice takes its items off). Neither is ever deleted (a removed item has
+// "removed": true), and a database without the stock kinds yet (teams.sql not re-run) just leaves
+// stock unshared, without stopping the rest of the sync.
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
 
-const FILE_OF = { client: 'clients', invoice: 'invoices', business: 'settings' };
+const FILE_OF = { client: 'clients', invoice: 'invoices', business: 'settings', stock: 'stock', stockmove: 'stockmoves' };
+const STOCK_KINDS = ['stock', 'stockmove'];
+const DATA_FILES = Object.values(FILE_OF);
 const LOCAL_SETTINGS = ['draft', 'putAside', 'reportCurrency', 'fxBank', 'backupProvider', 'backupDir', 'backupFolder', 'backupSharedDrive', 'pageSize', 'previewZoom'];
 const LOCAL_INVOICE = ['file', 'backup', 'backupError', 'backedUpAt', 'savedBy'];
 const omit = (o, keys) => { const r = { ...o }; for (const k of keys) delete r[k]; return r; };
@@ -45,15 +54,15 @@ const ROLE_NAME = { admin: 'Admin', accountant: 'Accountant', member: 'Team memb
 const roleOf = r => r === 'owner' ? 'admin' : ROLES.includes(r) ? r : 'member'; // "owner" before 1.18.0
 // What each role may do in the app. The renderer hides what isn't allowed; the database refuses it anyway.
 const RIGHTS = {
-  admin:      { seeAllInvoices: true,  createInvoices: true,  markPaid: true,  reports: true,  addClients: true,  editClients: true,  editBilling: true,  deleteClients: true,  editBusiness: true,  manageTeam: true },
-  accountant: { seeAllInvoices: true,  createInvoices: false, markPaid: true,  reports: true,  addClients: false, editClients: false, editBilling: false, deleteClients: false, editBusiness: false, manageTeam: false },
-  member:     { seeAllInvoices: false, createInvoices: true,  markPaid: false, reports: false, addClients: true,  editClients: true,  editBilling: false, deleteClients: false, editBusiness: false, manageTeam: false },
+  admin:      { seeAllInvoices: true,  createInvoices: true,  markPaid: true,  reports: true,  addClients: true,  editClients: true,  editBilling: true,  deleteClients: true,  editBusiness: true,  manageTeam: true,  editStock: true },
+  accountant: { seeAllInvoices: true,  createInvoices: false, markPaid: true,  reports: true,  addClients: false, editClients: false, editBilling: false, deleteClients: false, editBusiness: false, manageTeam: false, editStock: false },
+  member:     { seeAllInvoices: false, createInvoices: true,  markPaid: false, reports: false, addClients: true,  editClients: true,  editBilling: false, deleteClients: false, editBusiness: false, manageTeam: false, editStock: false },
 };
 
 function createTeam({ cloud, dataDir, readLocal, writeLocal, onRemoteChange, onStatus, focused }) {
   const statePath = () => path.join(app.getPath('userData'), 'team.json');
   let state = load(), busy = null, error = '', notice = '', again = false, pushTimer = null;
-  let members = [], invites = [], myInvites = [], lastSync = null, lastFull = 0, lastRefresh = 0;
+  let members = [], invites = [], myInvites = [], lastSync = null, lastFull = 0, lastRefresh = 0, stockError = '';
 
   function load() { try { return { synced: {}, versions: {}, dirtyAt: {}, ...JSON.parse(fs.readFileSync(statePath(), 'utf8')) }; } catch (e) { return { synced: {}, versions: {}, dirtyAt: {} }; } }
   function save() { fs.mkdirSync(path.dirname(statePath()), { recursive: true }); fs.writeFileSync(statePath(), JSON.stringify(state)); }
@@ -64,22 +73,24 @@ function createTeam({ cloud, dataDir, readLocal, writeLocal, onRemoteChange, onS
   const status = () => ({
     configured: cloud.status().configured, signedIn: cloud.signedIn(),
     team: active() ? { ...state.team, role: role(), can: RIGHTS[role()] } : null,
-    members, invites, myInvites, busy, error, notice, lastSync, me: me().email,
+    members, invites, myInvites, busy, error, notice, stockError, lastSync, me: me().email,
   });
-  // Records this computer never uploads: an accountant changes nothing but invoices' paid dates.
-  const readOnly = kind => role() === 'accountant' && kind !== 'invoice';
+  // Records this computer never uploads: an accountant changes nothing but invoices' paid dates,
+  // and only an admin changes stock items (a member's invoices only add stock moves).
+  const readOnly = kind => (role() === 'accountant' && kind !== 'invoice') || (kind === 'stock' && role() !== 'admin');
   const report = () => onStatus(status());
   const request = (p, opts) => cloud.request(p, opts);
   const enc = encodeURIComponent;
 
   // ---------- local data as records ----------
-  const read = name => { try { return readLocal(name); } catch (e) { return name === 'settings' ? {} : []; } };
+  const read = name => { try { return readLocal(name) || (name === 'settings' ? {} : []); } catch (e) { return name === 'settings' ? {} : []; } };
   const invoiceData = h => isPrivate(h) ? RESERVED : omit(h, LOCAL_INVOICE);
   function localRecords() {
     const out = new Map();
     for (const c of read('clients')) if (c && c.id && !isPrivate(c)) out.set(`client:${c.id}`, { kind: 'client', id: String(c.id), data: c });
     for (const h of read('invoices')) if (h && h.inv && h.inv.number) out.set(`invoice:${h.inv.number}`, { kind: 'invoice', id: String(h.inv.number), data: invoiceData(h) });
     out.set('business:business', { kind: 'business', id: 'business', data: cloud.withLogos(omit(read('settings'), LOCAL_SETTINGS)) });
+    for (const kind of STOCK_KINDS) for (const x of read(FILE_OF[kind])) if (x && x.id) out.set(`${kind}:${x.id}`, { kind, id: String(x.id), data: x });
     return out;
   }
   // Keys of this computer's personal clients and invoices.
@@ -114,6 +125,15 @@ function createTeam({ cloud, dataDir, readLocal, writeLocal, onRemoteChange, onS
       list.sort((a, b) => String(b.savedAt || '').localeCompare(String(a.savedAt || ''))); // newest first, as in History
       writeLocal('invoices', list);
     }
+    for (const kind of STOCK_KINDS) {
+      if (!kinds.has(kind)) continue;
+      const list = read(FILE_OF[kind]);
+      for (const r of rows.filter(x => x.kind === kind)) {
+        const i = list.findIndex(x => String(x.id) === r.id);
+        if (r.deleted) { if (i >= 0) list.splice(i, 1); } else if (i >= 0) list[i] = r.data; else list.push(r.data);
+      }
+      writeLocal(FILE_OF[kind], list);
+    }
     if (kinds.has('business')) {
       const r = rows.filter(x => x.kind === 'business').pop();
       if (!r.deleted) {
@@ -122,7 +142,7 @@ function createTeam({ cloud, dataDir, readLocal, writeLocal, onRemoteChange, onS
         writeLocal('settings', { ...cloud.takeLogos(r.data), ...kept });
       }
     }
-    return [...kinds].map(k => FILE_OF[k]);
+    return [...kinds].map(k => FILE_OF[k]).filter(Boolean);
   }
   function keepConflict(key, data) {
     const dir = path.join(dataDir(), 'conflicts'); fs.mkdirSync(dir, { recursive: true });
@@ -181,7 +201,8 @@ function createTeam({ cloud, dataDir, readLocal, writeLocal, onRemoteChange, onS
         const remoteLater = Date.parse(row.updated_at) >= (state.dirtyAt[key] || 0);
         keepConflict(key, remoteLater ? (mine && mine.data) : row.data);
         if (!remoteLater) { state.synced[key] = remoteHash; continue; } // ours is pushed next
-        const what = row.kind === 'invoice' ? row.id : row.kind === 'client' ? (row.data && row.data.company) || 'a client' : 'the business details';
+        const what = row.kind === 'invoice' ? row.id : row.kind === 'client' ? (row.data && row.data.company) || 'a client'
+          : row.kind === 'stock' ? (row.data && row.data.name) || 'a stock item' : row.kind === 'stockmove' ? 'a stock count' : 'the business details';
         notice = `${emailOf(row.updated_by) || 'Someone else'} changed ${what} at the same time as you. Their later change was kept; yours is saved in the conflicts folder.`;
       }
       apply.push({ kind: row.kind, id: row.id, data: row.data, deleted: row.deleted, by: emailOf(row.updated_by) });
@@ -202,16 +223,22 @@ function createTeam({ cloud, dataDir, readLocal, writeLocal, onRemoteChange, onS
       // A reserved number (someone's personal invoice) stays reserved, even though it isn't in our list.
       if (local.has(key) || state.synced[key] === DELETED || state.synced[key] === RESERVED_HASH) continue;
       const [kind, ...rest] = key.split(':');
-      if (kind === 'business' || readOnly(kind)) continue;
+      if (kind === 'business' || readOnly(kind) || STOCK_KINDS.includes(kind) || !FILE_OF[kind]) continue; // stock is never deleted
       up.push({ key, h: DELETED, row: { team_id: state.team.id, kind, id: rest.join(':'), data: null, deleted: true } });
     }
     const upsert = rows => request('/rest/v1/records?on_conflict=team_id,kind,id', {
       method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' }, body: rows,
     });
-    for (let i = 0; i < up.length; i += 100) {
-      const batch = up.slice(i, i + 100);
+    // Stock goes last, in batches of its own: a database that doesn't take stock yet refuses it (400)
+    // without holding up the clients, invoices and business details.
+    const isStock = b => STOCK_KINDS.includes(b.row.kind);
+    const batches = [];
+    for (const group of [up.filter(b => !isStock(b)), up.filter(isStock)]) for (let i = 0; i < group.length; i += 100) batches.push(group.slice(i, i + 100));
+    let stockFailed = '';
+    for (const batch of batches) {
       let res;
       try { res = await upsert(batch.map(b => b.row)) || []; } catch (e) {
+        if (isStock(batch[0]) && e.status === 400) { stockFailed = e.message; continue; } // tried again next sync
         if (e.status !== 403) throw e;
         // Something in the batch isn't ours to change (e.g. a number used by an invoice we can't see):
         // send them one by one, and leave the refused ones on this computer only.
@@ -225,6 +252,7 @@ function createTeam({ cloud, dataDir, readLocal, writeLocal, onRemoteChange, onS
       for (const r of res) { const k = `${r.kind}:${r.id}`; state.versions[k] = Math.max(state.versions[k] || 0, r.version); }
       save();
     }
+    stockError = stockFailed ? `Your stock isn't shared with the team yet: the team's database needs updating for stock (${stockFailed}). It stays on this computer meanwhile.` : '';
   }
   async function sync(reason) {
     if (!active()) return status();
@@ -244,7 +272,7 @@ function createTeam({ cloud, dataDir, readLocal, writeLocal, onRemoteChange, onS
   }
   // A local save: note when each record changed (for "later change wins"), and upload soon.
   function markDirty(name) {
-    if (!active() || !Object.values(FILE_OF).includes(name)) return false;
+    if (!active() || !DATA_FILES.includes(name)) return false;
     const kind = Object.keys(FILE_OF).find(k => FILE_OF[k] === name);
     if (readOnly(kind)) return true;
     const now = Date.now();
@@ -321,7 +349,7 @@ function createTeam({ cloud, dataDir, readLocal, writeLocal, onRemoteChange, onS
     if (backup) {
       backup = path.join(dataDir(), 'backups', `before ${why} ${name.replace(/[\\/:*?"<>|]/g, '')} ${stamp()}`);
       fs.mkdirSync(backup, { recursive: true });
-      for (const n of ['clients', 'settings', 'invoices']) { const f = path.join(dataDir(), `${n}.json`); if (fs.existsSync(f)) fs.copyFileSync(f, path.join(backup, `${n}.json`)); }
+      for (const n of DATA_FILES) { const f = path.join(dataDir(), `${n}.json`); if (fs.existsSync(f)) fs.copyFileSync(f, path.join(backup, `${n}.json`)); }
     }
     reset({ userId: me().id, team: { id: teamId, name, role } });
     members = await request(`/rest/v1/team_members?select=user_id,email,role,joined_at&team_id=eq.${teamId}`) || [];
@@ -331,6 +359,8 @@ function createTeam({ cloud, dataDir, readLocal, writeLocal, onRemoteChange, onS
     const myClients = read('clients').filter(isPrivate), myInvoices = read('invoices').filter(isPrivate);
     writeLocal('clients', []);
     writeLocal('invoices', []);
+    writeLocal('stock', []);
+    writeLocal('stockmoves', []);
     writeLocal('settings', Object.fromEntries(LOCAL_SETTINGS.filter(k => k in settings).map(k => [k, settings[k]])));
     const apply = rows.filter(r => !r.deleted && !isReserved(r.data)).map(r => ({ kind: r.kind, id: r.id, data: r.data, deleted: false, by: emailOf(r.updated_by) }));
     if (apply.length) applyRows(apply);
@@ -350,7 +380,7 @@ function createTeam({ cloud, dataDir, readLocal, writeLocal, onRemoteChange, onS
     if (rows.some(r => r.kind === 'business')) state.synced['business:business'] = hash(biz.data);
     lastSync = new Date().toISOString();
     save();
-    onRemoteChange(['clients', 'settings', 'invoices'], true);
+    onRemoteChange(DATA_FILES, true);
   }
 
   async function create(name) {

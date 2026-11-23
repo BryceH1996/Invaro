@@ -27,7 +27,9 @@ const ICON = path.join(__dirname, 'build', 'icon.png');
 
 // Data lives as plain JSON in a folder the user picks (default: Documents\Invaro).
 // The chosen folder is remembered in %APPDATA%\Invaro\config.json.
-const FILES = { clients: 'clients.json', settings: 'settings.json', invoices: 'invoices.json' };
+// Stock (from 1.25.0): stock.json holds the items, stockmoves.json every change to their counts
+// (stock received, counted, or taken off by an invoice). What's on hand is the sum of an item's moves.
+const FILES = { clients: 'clients.json', settings: 'settings.json', invoices: 'invoices.json', stock: 'stock.json', stockmoves: 'stockmoves.json' };
 const configPath = () => path.join(app.getPath('userData'), 'config.json');
 function readConfig() { try { return JSON.parse(fs.readFileSync(configPath(), 'utf8')); } catch (e) { return {}; } }
 function writeConfig(cfg) { fs.mkdirSync(path.dirname(configPath()), { recursive: true }); fs.writeFileSync(configPath(), JSON.stringify(cfg, null, 2)); }
@@ -70,6 +72,8 @@ const SEED = {
     lastSaveDir: '',
   },
   invoices: [],
+  stock: [],
+  stockmoves: [],
 };
 
 function file(name) { return path.join(DATA_DIR, FILES[name]); }
@@ -136,6 +140,8 @@ ipcMain.handle('data:load', () => ({
   clients: readJson('clients'),
   settings: readJson('settings'),
   invoices: readJson('invoices'),
+  stock: readJson('stock'),
+  stockmoves: readJson('stockmoves'),
   dataDir: DATA_DIR,
 }));
 
@@ -175,7 +181,7 @@ function startCloud() {
     writeLocal: (name, value) => { writeJson(name, value); if (name !== 'settings') remindersChanged(); },
     // The window merges the new data in place (no reload), so nobody loses what they're typing.
     onRemoteChange: (kinds, all) => win && win.webContents.send('data:changed', {
-      kinds, all: !!all, data: { clients: readJson('clients'), settings: readJson('settings'), invoices: readJson('invoices') },
+      kinds, all: !!all, data: Object.fromEntries(Object.keys(FILES).map(n => [n, readJson(n)])),
     }),
     onStatus: s => win && win.webContents.send('team:status', s),
     focused: () => !!(win && win.isFocused()),

@@ -41,7 +41,7 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 - **Show or hide rates:** untick **Show rates on the PDF** to leave your hourly, daily and unit rates off an invoice or quote, showing just the quantities and amounts. New ones start the way you last chose.
 - **Discounts:** click **%** beside any line to take a percentage or a whole amount off it. The saving shows as its own line under it, and comes off before the total and VAT.
 - **Discount on the whole invoice:** tick **Discount on the whole invoice**, then type a percentage and a reason (e.g. "Loyal customer"). It shows as the last line, with the amount it was taken from, before VAT.
-- **Live preview:** the PDF updates as you type. Zoom with − / +, or Ctrl (⌘ on a Mac) with + / − / 0. On **Clients**, the preview shows how the selected client appears on an invoice; on **My details**, the top and bottom of an example invoice with your details, design and banking.
+- **Live preview:** the PDF updates as you type. Zoom with − / +, or Ctrl (⌘ on a Mac) with + / − / 0. On **Clients**, the preview shows how the selected client appears on an invoice; on **My details**, an example invoice with your details, design and banking.
 - **A folder per client:** **Save invoice** puts the PDF straight into that client's folder, e.g. `Documents/Invaro/Northwind Design Co/Northwind Design Co. Invoice - November 2026 - Alex Morgan.pdf`.
 - **Numbering:** invoice numbers carry on from the last one you saved, and never clash in a team.
 - **Quotes:** switch **New invoice** to **Quote** for a quote with its own numbering and a "valid until" date, then turn it into an invoice with one click. Itemise it with **Item** lines (a quantity at a price each).
@@ -58,6 +58,11 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 - **Pictures:** add a picture to any item (it's kept small, so it syncs with the item). Pictures show in the stock list and when you add stock to an invoice, and items from your WooCommerce shop bring their shop picture.
 - **Import from your WooCommerce shop:** connect your WordPress shop with a read-only REST API key (WooCommerce → Settings → Advanced → REST API) and click **Import from WooCommerce** to bring in your products, with each variation as an item of its own: names, codes, categories, prices in your shop's currency and stock levels. Run it again whenever your shop changes. Invaro only reads from your shop, and the key stays on your computer.
 - **In a team:** everyone sees the stock and can add it to invoices and quotes; only admins add items, change prices or update counts.
+
+### Moving from another app
+- **QuickBooks, Xero, Sage, Wave, Zoho, FreshBooks or a spreadsheet:** export your customers, products and services, and invoices as CSV or Excel (.xlsx), then choose the file with **Import…** on Clients, **Import invoices…** on History, **Import CSV…** on Stock, or **My details → Moving from another app**. Invaro recognises each app's column names, skips report headings and total rows, and shows exactly what will be added or filled in before anything changes. Clients you already have only get the details they're missing.
+- **Imported invoices** come into History with their paid or unpaid status and count in Reports and the Dashboard. They don't take stock off (that happened in the old app), and your invoice numbering carries on after the highest number.
+- **Old PDF invoices:** on History, click **Add old PDFs…** and choose the files. Invaro reads each PDF on your computer and suggests its client, number, dates, total and VAT; you check them in a table, and each PDF is copied into its client's folder and shown in History as it is.
 
 ### How it's going
 - **Dashboard:** this month against last month and the same month last year, what's been paid, what you're owed and what's overdue, open quotes, a chart of the last 12 months (invoiced and paid), your top clients and best-selling stock, and a short list of things worth knowing, each with a button to act on it.

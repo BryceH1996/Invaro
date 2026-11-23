@@ -410,16 +410,16 @@ function parseNumber(v) {
 }
 const HEADERS = {
   sku: ['code', 'sku', 'itemcode', 'productcode', 'stockcode', 'partnumber', 'partno'],
-  name: ['item', 'name', 'itemname', 'product', 'productname', 'title'],
+  name: ['item', 'name', 'itemname', 'product', 'productname', 'title', 'productservicename', 'productservice'],
   category: ['category', 'categories', 'group'],
-  supplier: ['supplier', 'vendor', 'brand'],
+  supplier: ['supplier', 'vendor', 'brand', 'preferredvendor'],
   unit: ['unit', 'units', 'uom'],
-  onHand: ['onhand', 'quantity', 'qty', 'stock', 'stockquantity', 'stocklevel', 'instock', 'count', 'qtyonhand'],
+  onHand: ['onhand', 'quantity', 'qty', 'stock', 'stockquantity', 'stocklevel', 'instock', 'count', 'qtyonhand', 'quantityonhand', 'stockonhand'],
   lowAt: ['lowstocklevel', 'lowstock', 'lowat', 'reorderlevel', 'reorderpoint', 'minimum', 'minstock'],
-  cost: ['cost', 'costprice', 'buyprice', 'purchaseprice', 'unitcost'],
+  cost: ['cost', 'costprice', 'buyprice', 'purchaseprice', 'unitcost', 'purchasecost'],
   costCurrency: ['costcurrency'],
-  notes: ['notes', 'note'],
-  price: ['price', 'sellingprice', 'saleprice', 'regularprice', 'retailprice', 'unitprice'],
+  notes: ['notes', 'note', 'description', 'salesdescription'],
+  price: ['price', 'sellingprice', 'saleprice', 'regularprice', 'retailprice', 'unitprice', 'salesprice', 'salespricerate', 'rate'],
 };
 // Works out what each column is. Returns { cols: [{ i, field, cur }], plainPrice, unknown: [header] }.
 function csvColumns(header) {
@@ -469,8 +469,8 @@ function planImport(rows, setCounts) {
     if (!item && r.name) { const n = byName.get(matchKey(r.name)); if (n && (!r.sku || !n.sku)) item = n; } // same name, and no code to tell them apart
     const id = item ? item.id : r.wooId ? 'woo:' + r.wooId : r.sku ? 'sku:' + matchKey(r.sku) : 'name:' + matchKey(r.name);
     if (!item && !r.name) { out.push({ r, status: 'skip', why: r.sku ? `No item has code ${r.sku}, and there's no name to add it with` : 'No name or code' }); continue; }
-    if (seen.has(id)) { out.push({ r, status: 'skip', why: `Same item as ${seen.get(id)}` }); continue; }
-    seen.set(id, r.line ? `row ${r.line}` : r.name);
+    if (seen.has(id)) { out.push({ r, status: 'skip', why: `Same item as ${seen.get(id)}, earlier in the file` }); continue; }
+    seen.set(id, r.name || r.sku);
     const changes = [];
     if (item) {
       for (const f of Object.keys(FIELD_NAMES)) if (r[f] !== undefined && r[f] !== '' && String(r[f]) !== String(item[f] ?? '')) changes.push(FIELD_NAMES[f]);
@@ -542,7 +542,7 @@ function renderImport() {
       : esc(p.changes.length ? 'Updates ' + p.changes.join(', ') : 'Linked to your shop');
     const unit = { unit: p.r.unit || (p.item && p.item.unit) || '' };
     const count = p.count ? `${esc(qtyText(p.count.from, unit))} → <b>${esc(qtyText(p.count.to, unit))}</b>` : '';
-    return `<tr class="imp-${p.status}"><td>${esc(code)}</td><td>${esc(name)}${p.r.line ? `<div class="muted">row ${p.r.line}</div>` : ''}</td><td>${what}</td><td class="num">${count}</td></tr>`;
+    return `<tr class="imp-${p.status}"><td>${esc(code)}</td><td>${esc(name)}</td><td>${what}</td><td class="num">${count}</td></tr>`;
   }).join('') + (imp.plan.length > shown.length ? `<tr><td colspan="4" class="muted">…and ${imp.plan.length - shown.length} more</td></tr>` : '');
   const todo = imp.plan.filter(p => p.status === 'new' || p.status === 'update').length;
   $('#imp-go').disabled = !todo;
@@ -564,8 +564,10 @@ $('#imp-go').onclick = () => {
 $('#st-import').onclick = () => { $('#st-file').value = ''; $('#st-file').click(); };
 $('#st-file').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
-  if (!/\.(csv|txt|tsv)$/i.test(f.name)) { toast('Choose a CSV file. In Excel, use File → Save As → CSV.'); return; }
-  const table = parseCsv(await f.text());
+  if (!/\.(csv|txt|tsv|xlsx)$/i.test(f.name)) { toast('Choose a CSV or Excel (.xlsx) file.'); return; }
+  let table;
+  try { table = await readTableFile(f); } catch (err) { return toast(err.message); }
+  const h = findHeader(table); if (h > 0) table = table.slice(h);
   if (table.length < 2) { toast(`${f.name} has no rows under its headings.`); return; }
   const { cols, unknown } = csvColumns(table[0]);
   if (!cols.some(c => c.field === 'name' || c.field === 'sku')) { toast(`Couldn't find an Item or Code column in ${f.name}. Download the template to see the headings Invaro reads.`); return; }

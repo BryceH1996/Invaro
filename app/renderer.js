@@ -355,24 +355,12 @@ window.addEventListener('keydown', e => {
   e.preventDefault();
 });
 // ---------- what the preview shows on each tab ----------
-// New invoice: the invoice being drafted. Clients: an example invoice for the selected client, cropped
-// to the top (your header, their details and the lines). My details: an example invoice cropped to its
-// top (your details, logo and design) and bottom (banking details and notes). History: the invoice
-// you pick. The other tabs use the whole window and have no preview.
+// New invoice: the invoice being drafted. Clients: an example invoice for the selected client. My details:
+// an example invoice with your details, design and banking. History: the invoice you pick. The other
+// tabs use the whole window and have no preview.
 const PREVIEW_TABS = ['invoice', 'clients', 'me', 'history'];
 let currentTab = 'invoice', histPick = null;
 const previewUrls = [];
-// The PDF with its first page narrowed to part of the page (from / to: fractions from the top).
-function croppedUrl(doc, from, to) {
-  let s = doc.output();
-  s = s.replace(/\/MediaBox \[([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+)\]/, (m, x0, y0, w, h) => {
-    const H = Number(h);
-    return `/MediaBox [0 ${(H * (1 - to)).toFixed(2)} ${Number(w).toFixed(2)} ${(H * (1 - from)).toFixed(2)}]`.padEnd(m.length, ' '); // same length: nothing else moves
-  });
-  const bytes = new Uint8Array(s.length);
-  for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i) & 255;
-  return URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
-}
 // An example invoice: the client's default lines, or one line priced from their rates.
 function sampleInvoice(c) {
   const today = iso(new Date());
@@ -414,19 +402,24 @@ function refreshPreview(delay = 250) {
     if (tab === 'clients') {
       const c = client(editingClient);
       if (!c) return showPreview([], { empty: 'Add a client to see how they appear on your invoices.' });
-      return showPreview([{ url: croppedUrl(buildPdf(draftOptions(c, sampleInvoice(c))), 0, 0.62), view: 'view=FitH', title: 'How this client appears on an invoice' }],
-        { caption: `How ${c.company || 'this client'} appears on an invoice${c.items && c.items.length ? ', with their default lines' : ' (example line)'}` });
+      return showPreview([{ url: buildPdf(draftOptions(c, sampleInvoice(c))).output('bloburl'), title: 'How this client appears on an invoice' }],
+        { zoom: true, caption: `How ${c.company || 'this client'} appears on an invoice${c.items && c.items.length ? ', with their default lines' : ' (example line)'}` });
     }
     if (tab === 'me') {
-      const c = sampleClient(), doc = buildPdf(draftOptions(c, sampleInvoice(c)));
-      return showPreview([
-        { url: croppedUrl(doc, 0, 0.4), view: 'view=FitH', title: 'Top of your invoices' },
-        { url: croppedUrl(doc, 0.58, 1), view: 'view=FitH', title: 'Bottom of your invoices' },
-      ], { caption: 'Your details, logo and design (top) and banking details and notes (bottom), on an example invoice' });
+      const c = sampleClient();
+      return showPreview([{ url: buildPdf(draftOptions(c, sampleInvoice(c))).output('bloburl'), title: 'Your invoices' }],
+        { zoom: true, caption: 'Your details, logo, design and banking details, on an example invoice' });
     }
     const h = invoices.find(x => x.id === histPick);
     if (!h) return showPreview([], { empty: invoices.length ? 'Click an invoice or quote to see it here.' : 'Saved invoices and quotes appear here.' });
-    showPreview([{ url: buildPdf(pdfOptions(h)).output('bloburl'), title: `${h.inv.number} preview` }], { zoom: true });
+    if (h.imported && h.imported.pdf) {
+      if (!h.file || !store.readPdf) return showPreview([], { empty: `${h.inv.number} was added as a PDF on another computer, so it can't be shown here.` });
+      return store.readPdf(h.file).then(r => {
+        if (!r || r.error || histPick !== h.id) return r && r.error ? showPreview([], { empty: `Can't show ${h.inv.number}: ${r.error}` }) : null;
+        showPreview([{ url: URL.createObjectURL(new Blob([r], { type: 'application/pdf' })), title: `${h.inv.number} preview` }], { zoom: true, caption: `Added from ${h.imported.from}` });
+      });
+    }
+    showPreview([{ url: buildPdf(pdfOptions(h)).output('bloburl'), title: `${h.inv.number} preview` }], { zoom: true, caption: h.imported ? `Imported from ${h.imported.from}. Invaro makes this PDF from what was imported.` : '' });
   }, delay);
 }
 
@@ -674,6 +667,11 @@ const backupWhere = () => backupShared() ? `the "${backupShared()}" shared drive
 // Copies the invoice into the backup folder. Records the result on the history entry; returns true on success.
 async function backupPdf(entry, bytes) {
   if (!store.backupWrite) return false;
+  if (!bytes && entry.imported && entry.imported.pdf) { // an old PDF brought in: back up the file itself
+    const r = entry.file && store.readPdf ? await store.readPdf(entry.file) : null;
+    if (!r || r.error) { entry.backup = null; entry.backupError = (r && r.error) || 'The PDF is only on the computer it was added on'; return false; }
+    bytes = r;
+  }
   const res = await store.backupWrite(bytes || pdfBytes(entry), backupName(entry), backupSel(), entry.c.company);
   if (res && !res.error) {
     entry.backup = res.path; entry.backupError = null; entry.backedUpAt = new Date().toISOString();
@@ -734,7 +732,8 @@ $('#download').onclick = async () => {
   const previous = invoices.find(h => h.inv.number === entry.inv.number);
   entry.file = previous ? previous.file : '';
   if (previous) {
-    entry.paidAt = previous.paidAt; entry.tracked = previous.tracked;
+    entry.paidAt = previous.paidAt;
+    entry.tracked = docType(entry) === 'invoice' ? true : previous.tracked; // saved again now: its paid status counts from here on
     if (previous.convertedTo) entry.convertedTo = previous.convertedTo; // a quote remembers its invoice
     // Its exchange rates (for the day it was marked paid) stay while the currency does.
     if (previous.fx && curCode(previous.c.currency) === curCode(entry.c.currency)) entry.fx = previous.fx;
@@ -1480,14 +1479,20 @@ function payStatus(h) {
 }
 const overdueList = () => invoices.filter(h => payStatus(h).key === 'overdue');
 function renderOverdue() {
-  $('#overdue-bars').innerHTML = overdueList().map(h =>
+  // At most three bars: with many overdue (e.g. after importing old invoices), the rest are summed in one.
+  const list = overdueList(), shown = list.length > 3 ? list.slice(0, 2) : list, rest = list.slice(shown.length);
+  const sums = {}; for (const h of rest) { const c = curCode(h.c.currency); sums[c] = round2((sums[c] || 0) + num(h.total)); }
+  $('#overdue-bars').innerHTML = shown.map(h =>
     `<div class="update-bar remind overdue"><span><b>${esc(h.inv.number)}</b> for ${esc(h.c.company)} (${esc(money(h.total, h.c.currency))}) was due on ${esc(shortDate(h.inv.due))}.</span>
      ${can('markPaid') ? `<button class="btn primary" data-pay="${esc(h.id)}">Mark paid</button>` : ''}
-     <button class="btn" data-go-hist="1">History</button></div>`).join('');
+     <button class="btn" data-go-hist="1">History</button></div>`).join('')
+    + (rest.length ? `<div class="update-bar remind overdue"><span><b>${rest.length} more invoices are overdue</b> (${esc(Object.entries(sums).map(([c, v]) => money(v, c)).join(' + '))}).</span>
+     <button class="btn" data-go-hist="1">See them in History</button></div>` : '');
 }
 function setPaid(id, paid) {
   const h = invoices.find(x => x.id === id); if (!h) return;
   h.paidAt = paid ? todayIso() : null;
+  if (docType(h) === 'invoice') h.tracked = true; // you've said whether it's paid, so it counts as owed when it isn't
   if (!paid) delete h.fx; // its rates were for that payment
   persist('invoices'); renderHistory(); renderOverdue();
   if (paid) captureFx(h); // every bank's rate today, for its rand value in Reports (in the background)
@@ -1521,7 +1526,7 @@ function renderHistory() {
   $('#hist-empty').textContent = teamState.team && !can('seeAllInvoices') ? "You haven't saved any invoices yet. As a team member, you see only the invoices and quotes you make." : 'No invoices saved yet.';
   $('#hist').innerHTML = invoices.map(h =>
     `<tr data-pick="${h.id}" tabindex="0" class="${h.id === histPick ? 'on' : ''}"><td>${esc(h.inv.number)}${h.savedBy ? `<div class="muted" title="Saved by ${esc(h.savedBy)}">by ${esc(h.savedBy.split('@')[0])}</div>` : ''}${h.private ? '<div class="muted" title="Personal: not shared with a team">🔒 Personal</div>' : ''}</td>
-     <td>${esc(h.c.company)}</td><td>${esc(h.inv.date)}</td>
+     <td>${esc(h.c.company)}${h.imported ? `<div class="muted" title="Imported from ${esc(h.imported.from)}">Imported</div>` : ''}</td><td>${esc(h.inv.date)}</td>
      <td class="num">${esc(money(h.total, h.c.currency))}</td>
      <td>${statusCell(h)}</td><td class="num">${backupCell(h)}</td></tr>`
      + (docType(h) === 'quote' && openSteps.has(h.id) ? stepsRow(h) : '')).join('');
@@ -1529,14 +1534,14 @@ function renderHistory() {
   const h = invoices.find(x => x.id === histPick), bar = $('#hist-sel');
   bar.hidden = !h;
   if (!h) return;
-  const what = docType(h) === 'quote' ? 'quote' : 'invoice', desk = !!window.api;
+  const what = docType(h) === 'quote' ? 'quote' : 'invoice', desk = !!window.api, oldPdf = !!(h.imported && h.imported.pdf);
   bar.innerHTML = `<div class="hist-sel-what"><b>${esc(h.inv.number)}</b> · ${esc(h.c.company)} · ${esc(money(h.total, h.c.currency))}
       <span class="muted">${h.file ? esc(h.file.split(/[\\/]/).pop()) : desk ? 'Saved on another computer' : ''}</span></div>
     <div class="hist-sel-acts">
     ${h.file && desk ? `<button class="btn" data-act="open" data-id="${h.id}">Open</button><button class="btn" data-act="folder" data-id="${h.id}" title="Show the PDF in its folder">Show in folder</button>` : ''}
-    ${h.file || !desk ? (make ? `<button class="btn" data-act="pdf" data-id="${h.id}" title="Save this again (e.g. after editing your details)">Re-save</button>` : '')
+    ${oldPdf ? '' : h.file || !desk ? (make ? `<button class="btn" data-act="pdf" data-id="${h.id}" title="Save this again (e.g. after editing your details)">Re-save</button>` : '')
       : `<button class="btn" data-act="pdf" data-id="${h.id}" title="Saved on another computer. Make the PDF on this one too.">Save PDF here</button>`}
-    ${make ? `<button class="btn" data-act="edit" data-id="${h.id}" title="Change this ${what} and save it again under the same number">Edit</button>
+    ${make ? `${oldPdf ? '' : `<button class="btn" data-act="edit" data-id="${h.id}" title="Change this ${what} and save it again under the same number">Edit</button>`}
       <button class="btn" data-act="copy" data-id="${h.id}" title="Start a new invoice with these lines">Copy</button>
       ${what === 'quote' ? `<button class="btn" data-act="convert" data-id="${h.id}" title="Start an invoice from this quote">Make invoice</button>` : ''}
       <button class="btn" data-act="private" data-id="${h.id}" title="${h.private ? 'Share this with your team' : 'Keep this off your team'}">${h.private ? 'Share' : 'Make personal'}</button>
@@ -1650,6 +1655,9 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
   });
   if (migrated) await store.save('clients', clients);
   settings.nextNumber = nextNumberValue();
+  let fixed = 0;
+  for (const h of invoices) if (docType(h) === 'invoice' && !h.tracked && 'paidAt' in h) { h.tracked = true; fixed++; }
+  if (fixed) await store.save('invoices', invoices);
   settings.taxLabel ||= 'VAT'; settings.quotePrefix ??= 'QUO-'; settings.nextQuoteNumber ||= 1;
   if (settings.logo && store.loadLogo) logo = await loadLogoImage(await store.loadLogo(settings.logo));
   if (settings.bank?.logo && store.loadLogo) bankLogo = await loadLogoImage(await store.loadLogo(settings.bank.logo));
@@ -1862,6 +1870,8 @@ function applyRights() {
   $('#biz-locked').textContent = locked ? `Your business details, banking, invoice design and numbering are shared by ${teamState.team.name}. Only an admin can change them.` : '';
   renderClients(); renderHistory(); renderOverdue(); renderReminders(lastDue);
   if (tabShown('stock')) renderStock();
+  $('#hist-tools').hidden = !can('createInvoices') || (!!teamState.team && !can('editBilling'));
+  $('#cl-import').hidden = !can('addClients');
 }
 const inviteMessage = (team, email) => `Hi! I've invited you to "${team}" in Invaro, so we can work on the same clients and invoices.
 

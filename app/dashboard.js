@@ -53,6 +53,9 @@ function moneyFacts(cur, today = todayIso()) {
     debtors: Object.values(debtors).sort((a, b) => b.total - a.total),
   };
 }
+// Invoices with no paid status (saved before 1.12.0 and never marked paid or unpaid): not counted as owed,
+// so the assistant and the Dashboard say so rather than calling everything paid.
+const unknownStatus = cur => realInvoices().filter(h => !h.paidAt && payStatus(h).key === 'untracked' && (!cur || invCur(h) === cur));
 // Open quotes: not made into an invoice, and still in date.
 function openQuotes(cur) {
   const today = todayIso();
@@ -137,6 +140,8 @@ function insights(f) {
   if (best && best.invoiced) out.push({ text: `Your best month in the last year was ${monthName(best.m)}, with ${M(best.invoiced)} invoiced.` });
   const low = liveItems().filter(s => isLow(s));
   if (low.length) out.push({ text: `<b>${low.length} stock item${low.length === 1 ? ' is' : 's are'} low</b>: ${esc(low.slice(0, 3).map(s => s.name).join(', '))}${low.length > 3 ? '…' : ''}.`, tone: 'down', go: 'stock', label: 'Stock' });
+  const unknown = unknownStatus(f.cur);
+  if (unknown.length) out.push({ text: `${unknown.length} older invoice${unknown.length === 1 ? ' has' : 's have'} no paid status, so ${unknown.length === 1 ? "it isn't" : "they aren't"} counted as owed: ${esc(unknown.slice(0, 4).map(h => h.inv.number).join(', '))}${unknown.length > 4 ? '…' : ''}. Mark ${unknown.length === 1 ? 'it' : 'them'} paid or unpaid in History.`, tone: 'down', go: 'history', label: 'History' });
   const q = openQuotes(f.cur);
   if (q.length) out.push({ text: `${q.length} quote${q.length === 1 ? '' : 's'} worth ${M(sumBy(q, h => h.total))} ${q.length === 1 ? 'is' : 'are'} still open.`, go: 'history', label: 'History' });
   return out;

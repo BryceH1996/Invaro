@@ -227,6 +227,47 @@ ipcMain.handle('pdf:saveToClient', safe((_e, bytes, client, name, altName, previ
   }
   return { path: dest };
 }));
+// ---------- bringing in old invoices (1.28.0) ----------
+// Old PDF invoices: you pick them, and Invaro reads their text (unpdf, on this computer) so it can
+// suggest each one's number, date, client and total for you to check.
+let unpdfMod = null;
+const unpdf = async () => unpdfMod || (unpdfMod = await import('unpdf'));
+ipcMain.handle('import:pickPdfs', safe(async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: 'Choose your old invoices (PDF)', properties: ['openFile', 'multiSelections'], filters: [{ name: 'PDF files', extensions: ['pdf'] }],
+  });
+  if (canceled) return [];
+  const { extractText, getDocumentProxy } = await unpdf();
+  const out = [];
+  for (const p of filePaths.slice(0, 500)) {
+    const name = path.basename(p);
+    try {
+      if (fs.statSync(p).size > 25 * 1024 * 1024) { out.push({ path: p, name, text: '', error: 'Too big to read (over 25 MB)' }); continue; }
+      const pdf = await getDocumentProxy(new Uint8Array(fs.readFileSync(p)));
+      const { text } = await extractText(pdf, { mergePages: true });
+      out.push({ path: p, name, text: String(text || '').slice(0, 30000) });
+    } catch (e) { out.push({ path: p, name, text: '', error: "Couldn't read its text" }); }
+  }
+  return out;
+}));
+// Copies an old PDF into its client's folder, keeping its name (… (2).pdf if that's taken).
+ipcMain.handle('import:copyPdf', safe((_e, src, client) => {
+  src = String(src || '');
+  if (!/\.pdf$/i.test(src) || !fs.existsSync(src)) throw new Error(`${path.basename(src)} isn't there any more.`);
+  const dir = path.join(DATA_DIR, folderName(client));
+  fs.mkdirSync(dir, { recursive: true });
+  let dest = path.join(dir, path.basename(src));
+  if (path.resolve(dest) === path.resolve(src)) return { path: dest };
+  for (let i = 2; fs.existsSync(dest); i++) dest = path.join(dir, `${path.basename(src, path.extname(src))} (${i}).pdf`);
+  fs.copyFileSync(src, dest);
+  return { path: dest };
+}));
+// A saved PDF's bytes: an imported invoice is previewed and backed up as the PDF it came as.
+ipcMain.handle('pdf:read', safe((_e, p) => {
+  p = String(p || '');
+  if (!/\.pdf$/i.test(p)) throw new Error('Not a PDF');
+  return new Uint8Array(fs.readFileSync(p));
+}));
 ipcMain.handle('shell:clientFolder', (_e, client) => {
   const dir = path.join(DATA_DIR, folderName(client));
   fs.mkdirSync(dir, { recursive: true });

@@ -253,16 +253,20 @@
     <!-- CLIENTS -->
     <section data-tab="clients">
       <h2>Clients</h2>
-      <div class="row" style="grid-template-columns:1fr auto">
+      <div class="row" style="grid-template-columns:1fr auto auto">
         <select id="cl-select"></select>
         <button class="btn" id="cl-new">+ New client</button>
+        <button class="btn" id="cl-import" type="button" title="Customers exported from QuickBooks, Xero, Sage, Wave, Zoho or a spreadsheet (CSV or Excel)">Import…</button>
       </div>
       <div id="cl-form">
         <p class="drive-status" id="cl-locked" hidden></p>
         <label class="check" title="A personal client, and its invoices, stay on your computers only and are never shared with a team."><input type="checkbox" id="cl-private"> Personal client: never share it, or its invoices, with a team</label>
         <label>Company</label><input data-cl="company">
         <label>Contact people</label><input data-cl="contacts" placeholder="Jane Doe | John Doe">
-        <label>Phone</label><input data-cl="phone">
+        <div class="row">
+          <div><label>Phone</label><input data-cl="phone"></div>
+          <div><label>Email (not printed)</label><input data-cl="email" type="email" spellcheck="false"></div>
+        </div>
         <label>Address (one line per row)</label><textarea data-cl="address" rows="4"></textarea>
         <h3>Billing</h3>
         <div class="row">
@@ -486,6 +490,9 @@
         <button class="btn" id="change-data">Change folder…</button>
       </div>
       <p class="muted">Tip: pick a folder inside OneDrive to have everything backed up automatically.</p>
+      <h3>Moving from another app</h3>
+      <p class="muted">Bring in your customers, products and services, and invoices from QuickBooks, Xero, Sage, Wave, Zoho, FreshBooks or your own spreadsheet. Export each list from the old app as CSV or Excel (.xlsx) and choose it here: Invaro works out what's in it and shows you everything before it's added. Old invoices you only have as PDFs can be added on the History tab.</p>
+      <div class="actions"><button class="btn" id="me-import" type="button">Import from another app…</button></div>
     </section>
 
     <!-- NOTIFICATIONS -->
@@ -522,7 +529,10 @@
 
     <!-- HISTORY -->
     <section data-tab="history">
-      <h2>History</h2>
+      <div class="title-row"><h2>History</h2><div class="rep-tools" id="hist-tools">
+        <button class="btn" id="hist-import" type="button" title="Invoices exported from QuickBooks, Xero, Sage, Wave, Zoho or a spreadsheet (CSV or Excel)">Import invoices…</button>
+        <button class="btn" id="hist-pdfs" type="button" title="Old invoices you only have as PDF files">Add old PDFs…</button>
+      </div></div>
       <div class="hist-sel" id="hist-sel" hidden></div>
       <table class="hist">
         <thead><tr><th>No.</th><th>Client</th><th>Date</th><th class="num">Total</th><th>Status</th><th class="num" title="Backed up">Backup</th></tr></thead>
@@ -544,6 +554,15 @@
     </div>
   </div>
 </main>
+<dialog id="imx-dlg" class="folder-dlg imp-dlg imx-dlg">
+  <h3 id="imx-title">Import</h3>
+  <p class="muted" id="imx-note"></p>
+  <div class="imp-opts" id="imx-opts"></div>
+  <p class="imp-summary" id="imx-summary"></p>
+  <div class="imp-table"><table><thead id="imx-head"></thead><tbody id="imx-list"></tbody></table></div>
+  <div class="actions"><span style="flex:1"></span><button class="btn" id="imx-cancel" type="button">Cancel</button><button class="btn primary" id="imx-go" type="button">Import</button></div>
+</dialog>
+<input type="file" id="imx-file" accept=".csv,.xlsx,.txt,.tsv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
 <aside class="ask" id="ask" hidden aria-label="Ask Invaro">
   <div class="ask-head"><b>Ask Invaro</b><span class="muted">Runs on this computer. Nothing is sent anywhere.</span><button class="x" id="ask-close" title="Close (Esc)">×</button></div>
   <div class="ask-log" id="ask-log" aria-live="polite"></div>
@@ -556,5 +575,6 @@
 <script src="stock.js"></script>
 <script src="dashboard.js"></script>
 <script src="assistant.js"></script>
+<script src="importer.js"></script>
 </body>
 </html>

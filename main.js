@@ -586,10 +586,13 @@ ipcMain.handle('update:info', () => {
 });
 ipcMain.handle('update:releases', () => UPDATE_REPO && shell.openExternal(`https://github.com/${UPDATE_REPO}/releases`));
 
-// Exchange rates for Reports in rand: Standard Bank's T/T buying rate for an invoice's date (see fx.js).
+// Exchange rates for Reports in rand: a bank's buying rate for an invoice's date (see fx.js).
 let fxApi = null;
 const fx = () => fxApi || (fxApi = require('./fx')(path.join(app.getPath('userData'), 'fx-cache.json')));
-ipcMain.handle('fx:rate', safe((_e, currency, date) => fx().rate(currency, date)));
+ipcMain.handle('fx:rate', safe(async (_e, bank, currency, date) => {
+  try { return await fx().rate(bank, currency, date); } catch (e) { return { error: e.message, noHistory: !!e.noHistory }; }
+}));
+ipcMain.handle('fx:rates', safe((_e, currency, date) => fx().rates(currency, date)));
 
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('shell:open', (_e, p) => shell.openPath(p));

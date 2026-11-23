@@ -186,3 +186,9 @@ code { font-size:11.5px; word-break:break-all; }
 .roles table { margin-top:8px; width:100%; }
 .roles td:not(:first-child), .roles th { text-align:center; white-space:nowrap; }
 .share-list .person select { font-size:12px; padding:2px 4px; width:auto; }
+/* Choosing the bank for rand reports */
+.rep-bank { display:grid; grid-template-columns:auto minmax(0, 280px); gap:4px 10px; align-items:center; margin:2px 0 8px 24px; }
+.rep-bank[hidden] { display:none; }
+.rep-bank label { margin:0; }
+.rep-bank .muted { grid-column:1 / -1; }
+table.fx tr.unpaid td { color:var(--slate); }

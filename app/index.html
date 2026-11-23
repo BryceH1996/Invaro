@@ -337,7 +337,8 @@
     <section data-tab="reports">
       <div class="title-row"><h2>Reports</h2><select id="rep-period"></select></div>
       <p class="muted" id="rep-range"></p>
-      <label class="check" title="Each invoice in another currency is converted at Standard Bank's T/T buying rate (the rand the bank pays for the foreign currency) on its invoice date"><input type="checkbox" id="rep-zar"> Also show totals in rand (ZAR), at Standard Bank's buying rate on each invoice's date</label>
+      <label class="check" title="Paid invoices in another currency are converted at your bank's buying rate (the rand the bank pays for the foreign currency) on the day they're marked paid"><input type="checkbox" id="rep-zar"> Also show what's been paid in rand (ZAR), at a bank's buying rate on the day each invoice was paid</label>
+      <div class="rep-bank" id="rep-bank-row" hidden><label for="rep-bank">Bank</label><select id="rep-bank"><option value="standard">Standard Bank (T/T buying rate)</option><option value="absa">Absa (transfer buying rate)</option><option value="nedbank">Nedbank (cheque &amp; transfer buying rate)</option></select><span class="muted">Marking an invoice paid records every bank's rate that day. Standard Bank also has rates for every past date; Absa and Nedbank only publish today's, so for an invoice marked paid on an earlier day without one, Invaro uses Standard Bank's and says so. FNB, Capitec and Investec don't publish rates Invaro can read.</span></div>
       <p class="drive-status" id="rep-fx" hidden></p>
       <div id="rep-body"></div>
       <div class="actions"><button class="btn" id="rep-csv">Export to spreadsheet (CSV)</button></div>

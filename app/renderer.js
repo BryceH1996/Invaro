@@ -662,8 +662,8 @@ $('#download').onclick = async () => {
   if (previous) {
     entry.paidAt = previous.paidAt; entry.tracked = previous.tracked;
     if (previous.convertedTo) entry.convertedTo = previous.convertedTo; // a quote remembers its invoice
-    // Its exchange rate stays while the date and currency do (a rate typed in included).
-    if (previous.fx && previous.inv.date === entry.inv.date && curCode(previous.c.currency) === curCode(entry.c.currency)) entry.fx = previous.fx;
+    // Its exchange rates (for the day it was marked paid) stay while the currency does.
+    if (previous.fx && curCode(previous.c.currency) === curCode(entry.c.currency)) entry.fx = previous.fx;
     const steps = carryPaidSteps(previous, entry.lines);
     if (steps) entry.paidSteps = steps;
   }
@@ -673,7 +673,6 @@ $('#download').onclick = async () => {
   const idx = invoices.findIndex(h => h.inv.number === entry.inv.number);
   if (idx >= 0) invoices[idx] = entry; else invoices.unshift(entry);
   persist('invoices');
-  captureFx(entry); // the rand rate on the invoice date, for Reports (in the background)
   settings.nextNumber = nextNumberValue('invoice');
   settings.nextQuoteNumber = nextNumberValue('quote');
   // Done: back to what you were drafting before the edit, or on to the next one for the same client,
@@ -1105,59 +1104,91 @@ function reportRows(p) {
     return { h, cur: curCode(h.c.currency), subtotal, tax, total: Number(h.total) || 0, status: payStatus(h) };
   });
 }
-// ---------- rand values: exchange rates on each invoice's date ----------
-// With "Also show totals in rand" on (settings.reportCurrency = 'ZAR', kept on this computer), every
-// invoice in another currency is converted at Standard Bank's T/T buying rate for its invoice date
-// (fx.js): today's rate for an invoice dated today, otherwise that day's 16:00 closing rate, or the
-// last business day's before. The rate is stored on the invoice (h.fx.ZAR = { rate, on, kind, source }),
-// so the report never changes afterwards; kind 'manual' is a rate you typed in yourself.
+// ---------- rand values: exchange rates on the day each invoice was paid ----------
+// With "Also show what's been paid in rand" on (settings.reportCurrency = 'ZAR'), invoices in another
+// currency that are marked paid get a rand value, at the chosen bank's buying rate on the day they were
+// marked paid (settings.fxBank: standard, absa or nedbank; both settings stay on this computer; see fx.js).
+// Rates are stored on the invoice, one per bank, each with the paid date it's for ('for'), so the report
+// doesn't change afterwards and you can switch banks:
+//   h.fx.ZAR = { standard: { rate, on, kind, source, for }, absa: …, nedbank: …, manual: … }
+// 'manual' is a rate you typed in yourself, and wins. A rate that isn't for the invoice's paid date
+// (1.23.0's invoice-date rates, or a payment that was undone) is ignored.
+// Marking an invoice paid records every bank's rate that day. Absa and Nedbank only publish today's
+// rates, so for an earlier paid date with none recorded, Standard Bank's is used and the report says so.
 const reportCur = () => settings.reportCurrency || '';
+const FX_BANKS = { standard: 'Standard Bank', absa: 'Absa', nedbank: 'Nedbank' };
+const fxBank = () => FX_BANKS[settings.fxBank] ? settings.fxBank : 'standard';
 const fxMemo = {}; // rates for invoices this computer mayn't change (an accountant's view), kept in memory
-const fxTried = new Set(); // invoices whose rate couldn't be found this session (not tried again)
+const fxTried = new Set(); // "invoice|bank" lookups that failed this session (not tried again)
 let fxBusy = false, fxError = '';
 // Whether this computer may store the rate on the invoice (the team's roles decide who changes invoices).
 const canStoreFx = h => !teamState.team || !!h.private || can('editBilling') || (can('createInvoices') && !h.savedBy);
+// The invoice's rates for one currency, by bank: only those for its paid date.
+function fxRates(h, to) {
+  const v = (h.fx && h.fx[to]) || {};
+  const all = { ...(v.rate ? {} : v), ...(fxMemo[`${h.inv.number}|${to}`] || {}) }; // (1.23.0's single rate was for the invoice date)
+  return Object.fromEntries(Object.entries(all).filter(([, r]) => r && r.for && r.for === h.paidAt));
+}
+// The rate the report uses: yours, else the chosen bank's, else (for a bank without history) Standard Bank's.
 function fxOf(h, to) {
   if (curCode(h.c.currency) === to) return { rate: 1, kind: 'same' };
-  return (h.fx && h.fx[to]) || fxMemo[`${h.inv.number}|${to}`] || null;
+  const all = fxRates(h, to), bank = fxBank();
+  if (all.manual) return { ...all.manual, kind: 'manual' };
+  if (all[bank]) return { ...all[bank], bank };
+  if (bank !== 'standard' && all.standard && fxTried.has(`${h.inv.number}|${bank}`)) return { ...all.standard, bank: 'standard', instead: bank };
+  return null;
 }
-function setFx(h, to, v) {
-  if (!canStoreFx(h)) { fxMemo[`${h.inv.number}|${to}`] = v; return false; }
-  if (v) h.fx = { ...(h.fx || {}), [to]: v };
-  else if (h.fx) { delete h.fx[to]; if (!Object.keys(h.fx).length) delete h.fx; }
+function setFx(h, to, bank, v) { // bank: a bank's id, or 'manual'; v null removes it
+  const all = fxRates(h, to);
+  if (v) all[bank] = { ...v, for: h.paidAt }; else delete all[bank];
+  if (!canStoreFx(h)) { fxMemo[`${h.inv.number}|${to}`] = all; return false; }
+  h.fx = { ...(h.fx || {}) };
+  if (Object.keys(all).length) h.fx[to] = all; else delete h.fx[to];
+  if (!Object.keys(h.fx).length) delete h.fx;
   return true;
 }
+const dayLabel = d => `${shortDate(d)} ${d.slice(0, 4)}`;
 const fxLabel = f => !f ? '' : f.kind === 'manual' ? 'Your rate'
-  : f.kind === 'opening' ? `Standard Bank, ${shortDate(f.on)} ${f.on.slice(0, 4)} (rate when invoiced)`
-  : `Standard Bank, ${shortDate(f.on)} ${f.on.slice(0, 4)} closing`;
-// Looks up the missing rates one at a time, then shows the report again.
+  : `${FX_BANKS[f.bank] || 'Standard Bank'}, ${dayLabel(f.on)}${f.kind === 'current' || f.kind === 'opening' ? ' (rate when marked paid)' : f.kind === 'closing' ? ' closing' : ''}`
+    + (f.instead ? ` (${FX_BANKS[f.instead]} had no rate for this date)` : '');
+const isPaidRow = r => r.status.key === 'paid';
+// Looks up the missing rates (paid invoices only) one at a time, then shows the report again.
 async function fillRates(rows, to) {
-  const missing = rows.filter(r => !fxOf(r.h, to) && !fxTried.has(r.h.inv.number));
+  const bank = fxBank();
+  const missing = rows.filter(r => r.cur !== to && isPaidRow(r) && !fxOf(r.h, to) && !fxTried.has(`${r.h.inv.number}|${bank}|failed`));
   if (fxBusy || !missing.length || !store.fxRate) return;
   fxBusy = true; fxError = ''; renderReports();
   let stored = false;
   for (const r of missing) {
-    const res = await store.fxRate(r.cur, r.h.inv.date);
-    if (!res || res.error) { missing.forEach(x => { if (!fxOf(x.h, to)) fxTried.add(x.h.inv.number); }); fxError = (res && res.error) || 'no answer'; break; }
-    stored = setFx(r.h, to, { rate: res.rate, on: res.on, kind: res.kind, source: res.source }) || stored;
+    const n = r.h.inv.number;
+    let res = fxTried.has(`${n}|${bank}`) ? null : await store.fxRate(bank, r.cur, r.h.paidAt);
+    if (res && res.noHistory) { fxTried.add(`${n}|${bank}`); res = null; }
+    if (!res) res = fxRates(r.h, to).standard ? null : await store.fxRate('standard', r.cur, r.h.paidAt); // fall back to Standard Bank's history
+    if (res && res.error) { fxTried.add(`${n}|${bank}|failed`); fxError = res.error; continue; }
+    if (res) stored = setFx(r.h, to, res.bank || 'standard', { rate: res.rate, on: res.on, kind: res.kind, source: res.source }) || stored;
   }
   fxBusy = false;
   if (stored) persist('invoices');
   if (tabShown('reports')) renderReports();
 }
-// When an invoice in another currency is saved, its rate is taken there and then.
-async function captureFx(entry) {
+// When an invoice in another currency is marked paid, every bank's rate that day is recorded there and then.
+async function captureFx(h) {
   const to = reportCur();
-  if (!to || !store.fxRate || docType(entry) !== 'invoice' || curCode(entry.c.currency) === to || fxOf(entry, to)) return;
-  const res = await store.fxRate(curCode(entry.c.currency), entry.inv.date);
-  if (!res || res.error) return; // Reports tries again later
-  const h = invoices.find(x => x.inv.number === entry.inv.number);
-  if (h && setFx(h, to, { rate: res.rate, on: res.on, kind: res.kind, source: res.source })) persist('invoices');
+  if (!to || !store.fxRates || docType(h) !== 'invoice' || !h.paidAt || curCode(h.c.currency) === to) return;
+  const paidAt = h.paidAt;
+  const res = await store.fxRates(curCode(h.c.currency), paidAt);
+  if (!res || res.error || h.paidAt !== paidAt) return; // Reports tries again later (and an undone payment needs none)
+  let stored = false;
+  for (const [bank, v] of Object.entries(res)) {
+    if (v && !v.error && !fxRates(h, to)[bank]) stored = setFx(h, to, bank, { rate: v.rate, on: v.on, kind: v.kind, source: v.source }) || stored;
+  }
+  if (stored) persist('invoices');
 }
 $('#rep-zar').onchange = e => {
   settings.reportCurrency = e.target.checked ? 'ZAR' : ''; persist('settings');
   fxTried.clear(); renderReports();
 };
+$('#rep-bank').onchange = e => { settings.fxBank = e.target.value; persist('settings'); fxError = ''; renderReports(); };
 
 function renderReports() {
   const { list, current } = reportPeriods();
@@ -1168,22 +1199,24 @@ function renderReports() {
   const p = list.find(x => x.id === sel.value);
   const rows = reportRows(p);
   $('#rep-range').textContent = `${shortDate(p.from)} ${p.from.slice(0, 4)} to ${shortDate(p.to)} ${p.to.slice(0, 4)} · ${rows.length} invoice${rows.length === 1 ? '' : 's'}`;
-  const to = reportCur();
+  const to = reportCur(), bankName = FX_BANKS[fxBank()];
   $('#rep-zar').checked = !!to;
-  // Rand values: each row's amounts at its invoice's rate (null until the rate is known).
+  $('#rep-bank-row').hidden = !to; $('#rep-bank').value = fxBank();
+  // Rand values: paid invoices only, each at its invoice date's rate (null until the rate is known).
+  const isPaid = x => x.status.key === 'paid', isOwed = x => x.status.key === 'unpaid' || x.status.key === 'overdue';
   const foreign = to ? rows.filter(r => r.cur !== to) : [];
   for (const r of rows) {
-    const f = to && fxOf(r.h, to);
+    const f = to && isPaid(r) && fxOf(r.h, to);
     r.fx = f || null;
     r.home = f ? { subtotal: round2(r.subtotal * f.rate), tax: round2(r.tax * f.rate), total: round2(r.total * f.rate) } : null;
   }
-  const waiting = foreign.filter(r => !r.fx).length;
+  const waiting = foreign.filter(r => isPaid(r) && !r.fx).length;
   const fxNote = $('#rep-fx');
   fxNote.hidden = !to || (!waiting && !fxBusy);
   fxNote.className = 'drive-status' + (fxError && waiting ? ' err' : '');
   fxNote.textContent = !store.fxRate ? 'Exchange rates are only available in the desktop app.'
-    : fxBusy ? `Getting Standard Bank's rates for ${waiting} invoice${waiting === 1 ? '' : 's'}…`
-    : fxError ? `Couldn't get Standard Bank's rate for ${waiting} invoice${waiting === 1 ? '' : 's'} (${fxError}). Type the rate in yourself below, or switch rand off and on again to retry.`
+    : fxBusy ? `Getting ${bankName}'s rates for ${waiting} paid invoice${waiting === 1 ? '' : 's'}…`
+    : fxError ? `Couldn't get a rate for ${waiting} paid invoice${waiting === 1 ? '' : 's'} (${fxError}). Type the rate in yourself below, or switch rand off and on again to retry.`
     : '';
   if (to && waiting && !fxBusy) fillRates(rows, to);
   if (!rows.length) { $('#rep-body').innerHTML = '<p class="muted">No invoices in this period.</p>'; return; }
@@ -1195,42 +1228,43 @@ function renderReports() {
   let html = '<h3>Totals</h3>' + table(['Currency', 'Invoices', 'Excl. ' + label, label, 'Total', 'Paid', 'Outstanding'], byCur.map(cur => {
     const r = rows.filter(x => x.cur === cur);
     return tr([cur, r.length, money(sum(r, x => x.subtotal), cur), money(sum(r, x => x.tax), cur), `<b>${money(sum(r, x => x.total), cur)}</b>`,
-      money(sum(r.filter(x => x.status.key === 'paid'), x => x.total), cur),
-      money(sum(r.filter(x => x.status.key === 'unpaid' || x.status.key === 'overdue'), x => x.total), cur)]);
+      money(sum(r.filter(isPaid), x => x.total), cur), money(sum(r.filter(isOwed), x => x.total), cur)]);
   }).join(''));
-  // Everything in rand, at each invoice's own rate.
+  // What's been paid, all in rand, at each invoice's own rate.
   const home = (arr, f) => arr.some(r => !r.home) ? null : round2(arr.reduce((s, r) => s + f(r.home), 0));
   const homeMoney = v => v == null ? '<span class="muted" title="Waiting for an exchange rate">…</span>' : money(v, to);
-  const isPaid = x => x.status.key === 'paid', isOwed = x => x.status.key === 'unpaid' || x.status.key === 'overdue';
-  if (to && foreign.length) {
-    html += `<h3>All in rand (${to})</h3>` + table(['', 'Invoices', 'Excl. ' + label, label, 'Total', 'Paid', 'Outstanding'],
-      tr(['All currencies', rows.length, homeMoney(home(rows, h => h.subtotal)), homeMoney(home(rows, h => h.tax)), `<b>${homeMoney(home(rows, h => h.total))}</b>`,
-        homeMoney(home(rows.filter(isPaid), h => h.total)), homeMoney(home(rows.filter(isOwed), h => h.total))]));
-  }
   const showHome = to && foreign.length;
+  if (showHome) {
+    const paid = rows.filter(isPaid);
+    html += `<h3>Paid, in rand (${to})</h3>` + table(['', 'Invoices', 'Excl. ' + label, label, 'Total'],
+      tr(['All currencies', paid.length, homeMoney(home(paid, h => h.subtotal)), homeMoney(home(paid, h => h.tax)), `<b>${homeMoney(home(paid, h => h.total))}</b>`]))
+      + `<p class="muted">Invoices in other currencies get a rand value once they're marked paid, at ${esc(bankName)}'s buying rate on the day they were marked paid.</p>`;
+  }
   const clientsIn = [...new Set(rows.map(r => `${r.h.c.company}\u0000${r.cur}`))];
-  html += '<h3>By client</h3>' + table(['Client', 'Invoices', 'Total', 'Paid', 'Outstanding', ...(showHome ? [`Total in ${to}`] : [])], clientsIn.map(k => {
+  html += '<h3>By client</h3>' + table(['Client', 'Invoices', 'Total', 'Paid', 'Outstanding', ...(showHome ? [`Paid in ${to}`] : [])], clientsIn.map(k => {
     const [name, cur] = k.split('\u0000'); const r = rows.filter(x => x.h.c.company === name && x.cur === cur);
     return tr([esc(name), r.length, money(sum(r, x => x.total), cur), money(sum(r.filter(isPaid), x => x.total), cur),
-      money(sum(r.filter(isOwed), x => x.total), cur), ...(showHome ? [homeMoney(home(r, h => h.total))] : [])]);
+      money(sum(r.filter(isOwed), x => x.total), cur), ...(showHome ? [homeMoney(home(r.filter(isPaid), h => h.total))] : [])]);
   }).join(''));
   const months = [...new Set(rows.map(r => r.h.inv.date.slice(0, 7)))].sort();
-  html += '<h3>By month</h3>' + table(['Month', ...byCur, ...(showHome ? [`All in ${to}`] : [])], months.map(m => {
+  html += '<h3>By month</h3>' + table(['Month', ...byCur, ...(showHome ? [`Paid in ${to}`] : [])], months.map(m => {
     const d = parseDate(m + '-01'), inM = rows.filter(x => x.h.inv.date.startsWith(m));
     return tr([`${MONTHS[d.getMonth()]} ${d.getFullYear()}`, ...byCur.map(cur => money(sum(inM.filter(x => x.cur === cur), x => x.total), cur)),
-      ...(showHome ? [homeMoney(home(inM, h => h.total))] : [])]);
+      ...(showHome ? [homeMoney(home(inM.filter(isPaid), h => h.total))] : [])]);
   }).join(''));
-  // The rate behind each invoice in another currency; type a rate in to use your own.
+  // The rate behind each paid invoice in another currency; type a rate in to use your own.
   if (showHome) {
     const editable = r => canStoreFx(r.h) || !teamState.team;
-    html += `<h3>Exchange rates</h3><p class="muted">Rand per unit of each invoice's currency: Standard Bank's T/T buying rate (what the bank pays you) on the invoice date, unless you type in your own.</p>`
-      + `<table class="report fx"><thead><tr><th>Invoice</th><th>Date</th><th>Client</th><th class="num">Total</th><th class="num">Rate</th><th>From</th><th class="num">In ${to}</th></tr></thead><tbody>`
-      + foreign.sort((a, b) => a.h.inv.date.localeCompare(b.h.inv.date)).map(r => `<tr>
-        <td>${esc(r.h.inv.number)}</td><td>${esc(r.h.inv.date)}</td><td>${esc(r.h.c.company)}</td>
+    html += `<h3>Exchange rates</h3><p class="muted">Rand per unit of each invoice's currency: ${esc(bankName)}'s buying rate (what the bank pays you) on the day each invoice was marked paid, unless you type in your own. Unpaid invoices get theirs once they're marked paid.</p>`
+      + `<table class="report fx"><thead><tr><th>Invoice</th><th>Paid</th><th>Client</th><th class="num">Total</th><th class="num">Rate</th><th>From</th><th class="num">In ${to}</th></tr></thead><tbody>`
+      + foreign.sort((a, b) => (a.h.paidAt || '9999').localeCompare(b.h.paidAt || '9999') || a.h.inv.date.localeCompare(b.h.inv.date)).map(r => isPaid(r) ? `<tr>
+        <td>${esc(r.h.inv.number)}</td><td>${esc(r.h.paidAt)}</td><td>${esc(r.h.c.company)}</td>
         <td class="num">${money(r.total, r.cur)}</td>
         <td class="num"><input class="fx-rate" type="number" step="0.0001" min="0" data-fx="${esc(r.h.inv.number)}" value="${r.fx ? r.fx.rate : ''}" placeholder="${fxBusy ? '…' : 'Rate'}" ${editable(r) ? '' : 'readonly title="Only an admin, or whoever saved it, can change the rate on a shared invoice"'}></td>
-        <td class="muted">${esc(fxLabel(r.fx))}${r.fx && r.fx.kind === 'manual' && editable(r) ? ` <button class="link" data-fx-reset="${esc(r.h.inv.number)}" title="Use Standard Bank's rate for this date again">Use Standard Bank's</button>` : ''}</td>
-        <td class="num">${homeMoney(r.home && r.home.total)}</td></tr>`).join('')
+        <td class="muted">${esc(fxLabel(r.fx))}${r.fx && r.fx.kind === 'manual' && editable(r) ? ` <button class="link" data-fx-reset="${esc(r.h.inv.number)}" title="Use ${esc(bankName)}'s rate for this date again">Use ${esc(bankName)}'s</button>` : ''}</td>
+        <td class="num">${homeMoney(r.home && r.home.total)}</td></tr>` : `<tr class="unpaid">
+        <td>${esc(r.h.inv.number)}</td><td class="muted">–</td><td>${esc(r.h.c.company)}</td>
+        <td class="num">${money(r.total, r.cur)}</td><td class="num muted">–</td><td class="muted" colspan="2">Not paid yet: shown once it's marked paid</td></tr>`).join('')
       + '</tbody></table>';
   }
   $('#rep-body').innerHTML = html;
@@ -1240,24 +1274,24 @@ $('#rep-body').addEventListener('change', e => {
   const n = e.target.dataset.fx; if (!n) return;
   const h = invoices.find(x => x.inv.number === n), to = reportCur(); if (!h || !to) return;
   const v = parseFloat(e.target.value);
-  setFx(h, to, v > 0 ? { rate: v, on: h.inv.date, kind: 'manual', source: 'Your rate' } : null);
-  if (!(v > 0)) fxTried.delete(n); // cleared: look up Standard Bank's again
+  setFx(h, to, 'manual', v > 0 ? { rate: v, on: h.inv.date, kind: 'manual', source: 'Your rate' } : null);
   persist('invoices'); renderReports();
 });
 $('#rep-body').addEventListener('click', e => {
   const n = e.target.dataset.fxReset; if (!n) return;
   const h = invoices.find(x => x.inv.number === n), to = reportCur(); if (!h || !to) return;
-  setFx(h, to, null); fxTried.delete(n); persist('invoices'); renderReports();
+  setFx(h, to, 'manual', null); persist('invoices'); renderReports();
 });
 $('#rep-period').onchange = renderReports;
 $('#rep-csv').onclick = () => {
   const { list } = reportPeriods(); const p = list.find(x => x.id === $('#rep-period').value) || list[0];
   const q = v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
-  // With rand on, each row also has its rate, where the rate came from, and its amounts in rand.
+  // With rand on, paid rows also have their rate, where it came from, and their amounts in rand.
   const to = reportCur();
   const fxCols = to ? [`Rate to ${to}`, 'Rate date', 'Rate from', `Excl. tax (${to})`, `Tax (${to})`, `Total (${to})`] : [];
   const fxCells = r => {
     if (!to) return [];
+    if (r.status.key !== 'paid') return ['', '', 'Not paid yet', '', '', ''];
     const f = fxOf(r.h, to);
     if (!f) return ['', '', 'No rate yet', '', '', ''];
     const x = v => (v * f.rate).toFixed(2);
@@ -1370,7 +1404,9 @@ function renderOverdue() {
 function setPaid(id, paid) {
   const h = invoices.find(x => x.id === id); if (!h) return;
   h.paidAt = paid ? todayIso() : null;
+  if (!paid) delete h.fx; // its rates were for that payment
   persist('invoices'); renderHistory(); renderOverdue();
+  if (paid) captureFx(h); // every bank's rate today, for its rand value in Reports (in the background)
   toast(paid ? `${h.inv.number} marked as paid` : `${h.inv.number} marked as unpaid`);
 }
 $('#overdue-bars').onclick = e => {

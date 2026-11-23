@@ -34,7 +34,7 @@ const { app } = require('electron');
 const FILE_OF = { client: 'clients', invoice: 'invoices', business: 'settings', stock: 'stock', stockmove: 'stockmoves' };
 const STOCK_KINDS = ['stock', 'stockmove'];
 const DATA_FILES = Object.values(FILE_OF);
-const LOCAL_SETTINGS = ['draft', 'putAside', 'reportCurrency', 'fxBank', 'backupProvider', 'backupDir', 'backupFolder', 'backupSharedDrive', 'pageSize', 'previewZoom'];
+const LOCAL_SETTINGS = ['draft', 'putAside', 'reportCurrency', 'homeCurrency', 'fxBank', 'backupProvider', 'backupDir', 'backupFolder', 'backupSharedDrive', 'pageSize', 'previewZoom'];
 const LOCAL_INVOICE = ['file', 'backup', 'backupError', 'backedUpAt', 'savedBy'];
 const omit = (o, keys) => { const r = { ...o }; for (const k of keys) delete r[k]; return r; };
 // Postgres stores jsonb with its own key order, so hashes use sorted keys.

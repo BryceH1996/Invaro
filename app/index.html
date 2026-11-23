@@ -47,6 +47,7 @@
       </div>
       <div class="dash-grid">
         <div class="card"><h3>Worth knowing</h3><ul class="insights" id="dash-insights"></ul></div>
+        <div class="card" id="dash-split-card" hidden><h3>This year by currency</h3><div id="dash-split"></div></div>
         <div class="card"><h3>Top clients, last 12 months</h3><div id="dash-clients"></div></div>
         <div class="card" id="dash-stock-card"><h3>Best-selling stock, last 12 months</h3><div id="dash-stock"></div></div>
       </div>
@@ -423,6 +424,12 @@
       <div class="row">
         <div><label>Page size</label>
           <select data-set="pageSize"><option value="letter">Letter</option><option value="a4">A4</option></select></div>
+        <div><label for="home-cur">Your currency <button type="button" class="info" aria-label="About your currency" aria-expanded="false">i</button><span class="tip" hidden>Amounts owed to you in another currency also show what they're worth in yours today, in brackets, e.g. £1786.00 (R39912). The Dashboard can add everything up in your currency. Rates are the bank's buying rate (rand per unit), read on this computer.</span></label>
+          <select data-set="homeCurrency" id="home-cur"></select></div>
+      </div>
+      <div class="row" id="home-bank-row" hidden>
+        <div><label for="home-bank">Rates from</label>
+          <select data-set="fxBank" id="home-bank"><option value="standard">Standard Bank</option><option value="absa">Absa</option><option value="nedbank">Nedbank</option></select></div>
         <div></div>
       </div>
       <h3>Invoice backup <button type="button" class="info" aria-label="About backups" aria-expanded="false">i</button><span class="tip" id="drive-help" hidden></span></h3>

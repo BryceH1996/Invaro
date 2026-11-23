@@ -387,3 +387,4 @@ h2 .info { vertical-align:3px; }
   .rep-grid, .dash-grid { grid-template-columns:minmax(0, 1fr); }
   main.full .panel { padding:20px; }
 }
+tr.sum-row td { border-top:2px solid var(--border); border-bottom:0; }

@@ -937,12 +937,15 @@ function renderMe() {
   const me = settings.me || {};
   $$('[data-me]').forEach(el => setVal(el, me[el.dataset.me] ?? ''));
   $$('[data-set]').forEach(el => setVal(el, settings[el.dataset.set] ?? ''));
+  $('#home-bank').value = fxBank();
+  $('#home-bank-row').hidden = !homeCur() || !store.fxRate;
   $('#data-dir').textContent = dataDir;
 }
 $$('[data-me]').forEach(el => el.oninput = () => { (settings.me ||= {})[el.dataset.me] = el.value; persist('settings'); refreshPreview(); });
 $$('[data-set]').forEach(el => el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => {
   settings[el.dataset.set] = el.type === 'number' ? num(el.value) : el.value;
   persist('settings'); refreshPreview();
+  if (el.dataset.set === 'homeCurrency' || el.dataset.set === 'fxBank') { renderMe(); loadTodayRates(true); homeRatesArrived(); }
 }));
 $('#open-data').onclick = () => store.openDataDir();
 $('#change-data').onclick = async () => {
@@ -1249,7 +1252,7 @@ async function fillRates(rows, to) {
 }
 // When an invoice in another currency is marked paid, every bank's rate that day is recorded there and then.
 async function captureFx(h) {
-  const to = reportCur();
+  const to = reportCur() || (homeCur() === 'ZAR' ? 'ZAR' : '');
   if (!to || !store.fxRates || docType(h) !== 'invoice' || !h.paidAt || curCode(h.c.currency) === to) return;
   const paidAt = h.paidAt;
   const res = await store.fxRates(curCode(h.c.currency), paidAt);
@@ -1322,7 +1325,7 @@ function renderReports() {
     return `${byCur.length > 1 ? `<h3>${cur}</h3>` : ''}<div class="tiles rep-tiles">${[
       tile('Invoiced', money(sum(r, x => x.total), cur), plural(r.length, 'invoice')),
       tile('Paid', money(sum(paid, x => x.total), cur) + rateNote(paid), `${paid.length} of ${r.length} paid`),
-      tile('Outstanding', money(sum(owed, x => x.total), cur), owed.length ? plural(owed.length, 'unpaid invoice') : 'Nothing owed'),
+      tile('Outstanding', money(sum(owed, x => x.total), cur) + homeNote(sum(owed, x => x.total), cur), owed.length ? plural(owed.length, 'unpaid invoice') : 'Nothing owed'),
       tile(esc(label), money(sum(r, x => x.tax), cur), `on ${money(sum(r, x => x.subtotal), cur)} excl. ${esc(label)}`),
     ].join('')}</div>`;
   }).join('');
@@ -1339,7 +1342,7 @@ function renderReports() {
   html += '<div class="rep-grid"><div class="card"><h3>By client</h3>' + table(['Client', 'Invoices', 'Total', 'Paid', 'Outstanding', ...(showHome ? [`Paid in ${to}`] : [])], clientsIn.map(k => {
     const [name, cur] = k.split('\u0000'); const r = rows.filter(x => x.h.c.company === name && x.cur === cur);
     return tr([esc(name), r.length, money(sum(r, x => x.total), cur), money(sum(r.filter(isPaid), x => x.total), cur) + rateNote(r),
-      money(sum(r.filter(isOwed), x => x.total), cur), ...(showHome ? [homeMoney(home(r.filter(isPaid), h => h.total))] : [])]);
+      money(sum(r.filter(isOwed), x => x.total), cur) + homeNote(sum(r.filter(isOwed), x => x.total), cur), ...(showHome ? [homeMoney(home(r.filter(isPaid), h => h.total))] : [])]);
   }).join('')) + '</div>';
   const months = [...new Set(rows.map(r => r.h.inv.date.slice(0, 7)))].sort();
   html += '<div class="card"><h3>By month</h3>' + table(['Month', ...byCur, ...(showHome ? [`Paid in ${to}`] : [])], months.map(m => {
@@ -1495,10 +1498,10 @@ function renderOverdue() {
   const list = overdueList(), shown = list.length > 3 ? list.slice(0, 2) : list, rest = list.slice(shown.length);
   const sums = {}; for (const h of rest) { const c = curCode(h.c.currency); sums[c] = round2((sums[c] || 0) + num(h.total)); }
   $('#overdue-bars').innerHTML = shown.map(h =>
-    `<div class="update-bar remind overdue"><span><b>${esc(h.inv.number)}</b> for ${esc(h.c.company)} (${esc(money(h.total, h.c.currency))}) was due on ${esc(shortDate(h.inv.due))}.</span>
+    `<div class="update-bar remind overdue"><span><b>${esc(h.inv.number)}</b> for ${esc(h.c.company)} (${esc(money(h.total, h.c.currency))}${esc(homeNote(h.total, invCur(h), false).replace(/^ \((.*)\)$/, ', $1 today'))}) was due on ${esc(shortDate(h.inv.due))}.</span>
      ${can('markPaid') ? `<button class="btn primary" data-pay="${esc(h.id)}">Mark paid</button>` : ''}
      <button class="btn" data-go-hist="1">History</button></div>`).join('')
-    + (rest.length ? `<div class="update-bar remind overdue"><span><b>${rest.length} more invoices are overdue</b> (${esc(Object.entries(sums).map(([c, v]) => money(v, c)).join(' + '))}).</span>
+    + (rest.length ? `<div class="update-bar remind overdue"><span><b>${rest.length} more invoices are overdue</b> (${esc(Object.entries(sums).map(([c, v]) => money(v, c) + homeNote(v, c, false)).join(' + '))}).</span>
      <button class="btn" data-go-hist="1">See them in History</button></div>` : '');
 }
 function setPaid(id, paid) {
@@ -1539,7 +1542,7 @@ function renderHistory() {
   $('#hist').innerHTML = invoices.map(h =>
     `<tr data-pick="${esc(h.id)}" tabindex="0" class="${h.id === histPick ? 'on' : ''}"><td>${esc(h.inv.number)}${h.savedBy ? `<div class="muted" title="Saved by ${esc(h.savedBy)}">by ${esc(h.savedBy.split('@')[0])}</div>` : ''}${h.private ? '<div class="muted" title="Personal: not shared with a team">🔒 Personal</div>' : ''}</td>
      <td>${esc(h.c.company)}${h.imported ? `<div class="muted" title="Imported from ${esc(h.imported.from)}">Imported</div>` : ''}</td><td>${esc(h.inv.date)}</td>
-     <td class="num">${esc(money(h.total, h.c.currency))}</td>
+     <td class="num">${esc(money(h.total, h.c.currency))}${isOwedStatus(h) ? homeNote(h.total, invCur(h)) : ''}</td>
      <td>${statusCell(h)}</td><td class="num">${backupCell(h)}</td></tr>`
      + (docType(h) === 'quote' && openSteps.has(h.id) ? stepsRow(h) : '')).join('');
   // What you can do with the one you picked.
@@ -1657,6 +1660,7 @@ $$('nav button').forEach(b => b.onclick = () => go(b.dataset.go));
   clients = d.clients; settings = d.settings; invoices = d.invoices; dataDir = d.dataDir;
   stock = d.stock || []; stockMoves = d.stockmoves || [];
   Object.assign(base, clone({ clients, settings, invoices, stock, stockmoves: stockMoves }));
+  $('#home-cur').innerHTML = '<option value="">None</option>' + Object.entries(CURRENCIES).map(([code, { symbol, name }]) => `<option value="${code}">${code} (${symbol}) – ${name}</option>`).join('');
   $('#cl-currency').innerHTML = Object.entries(CURRENCIES)
     .map(([code, { symbol, name }]) => `<option value="${code}">${code} (${symbol}) – ${name}</option>`).join('');
   let migrated = false;

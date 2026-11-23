@@ -1,6 +1,10 @@
-// Dashboard (from 1.27.0): how the months are going, in one currency at a time. Quotes aren't counted.
-// "Invoiced" goes by each invoice's date, "Paid" by the day it was marked paid. The figures here are
-// also what the assistant (assistant.js) answers from.
+// Dashboard (from 1.27.0): how the months are going. Quotes aren't counted. "Invoiced" goes by each
+// invoice's date, "Paid" by the day it was marked paid. The figures here are also what the assistant
+// (assistant.js) answers from.
+//
+// With your currency set (My details, 1.29.0), the Dashboard can show everything in it ("All"): a paid
+// invoice in another currency counts at the rate on the day it was paid when Invaro recorded one,
+// anything else at today's rate. Amounts owed in another currency show today's value in brackets.
 const sumBy = (arr, f) => round2(arr.reduce((t, x) => t + (Number(f(x)) || 0), 0));
 const monthKey = d => String(d || '').slice(0, 7);
 const monthName = (k, short) => { const d = parseDate(k + '-01'); return `${short ? MONTHS[d.getMonth()].slice(0, 3) : MONTHS[d.getMonth()]} ${d.getFullYear()}`; };
@@ -19,38 +23,108 @@ function dashCurrencies() {
   return list.length ? list : [usualCurrency()];
 }
 const isOwedStatus = h => ['unpaid', 'overdue'].includes(payStatus(h).key);
-// Everything the dashboard and the assistant say about money, for one currency.
-function moneyFacts(cur, today = todayIso()) {
-  const list = realInvoices().filter(h => invCur(h) === cur);
+
+// ---------- your currency, and today's rates ----------
+const homeCur = () => CURRENCIES[settings.homeCurrency] ? settings.homeCurrency : '';
+const todayRand = {}; // currency → { rate (rand per unit), on, bank, source }, from your chosen bank today
+let todayAt = 0, todayBank = '', todayBusy = null, todayError = '';
+function loadTodayRates(force) {
+  if (!store.fxRate || !homeCur()) return null;
+  if (todayBusy) return todayBusy;
+  if (!force && todayBank === fxBank() && Date.now() - todayAt < 15 * 60 * 1000) return null;
+  const bank = fxBank(), want = Object.keys(CURRENCIES).filter(c => c !== 'ZAR');
+  todayBusy = Promise.all(want.map(async c => {
+    const r = await store.fxRate(bank, c, todayIso());
+    if (r && !r.error && r.rate > 0) todayRand[c] = { rate: r.rate, on: r.on, bank: r.bank || bank, source: r.source }; else if (r && r.error) todayError = r.error;
+  })).then(() => { todayAt = Date.now(); todayBank = bank; todayBusy = null; homeRatesArrived(); });
+  return todayBusy;
+}
+// Rand per unit of a currency today (1 for rand), or null until it's known.
+const randPer = c => c === 'ZAR' ? 1 : todayRand[c] ? todayRand[c].rate : null;
+// An amount in another currency in yours, at today's rate (via rand), or null until the rates are in.
+function toHome(amount, from) {
+  const home = homeCur();
+  if (!home || from === home) return home ? num(amount) : null;
+  const a = randPer(from), b = randPer(home);
+  if (!a || !b) { loadTodayRates(); return null; }
+  return round2(num(amount) * a / b);
+}
+// What an invoice is worth in your currency: the rate on the day it was paid if Invaro has it (rand
+// only, since banks quote in rand), otherwise today's.
+function homeValue(h) {
+  const home = homeCur(), from = invCur(h), t = num(h.total);
+  if (!home || from === home) return t;
+  if (h.paidAt && home === 'ZAR') { const f = fxOf(h, 'ZAR'); if (f && f.rate > 0) return round2(t * f.rate); }
+  return toHome(t, from);
+}
+const wholeMoney = (v, c) => (v < 0 ? '-' : '') + curSymbol(c) + Math.round(Math.abs(v));
+const rateSource = (from, home) => {
+  const r = todayRand[from === 'ZAR' ? home : from];
+  return r ? `${FX_BANKS[r.bank] || 'Standard Bank'}'s buying rate today` : "today's rate";
+};
+// " (R39912)" after an amount owed in another currency: plain text, or a span with the rate in its title.
+function homeNote(amount, from, html = true) {
+  const home = homeCur();
+  if (!home || !from || from === home) return '';
+  const v = toHome(amount, from);
+  if (v == null) return '';
+  const text = `(${wholeMoney(v, home)})`;
+  if (!html) return ' ' + text;
+  const per = round2(randPer(from) / randPer(home));
+  return ` <span class="fx-note" title="${esc(`At ${rateSource(from, home)}: 1 ${from} = ${per} ${home}`)}">${esc(text)}</span>`;
+}
+// Called when today's rates arrive: redraw whatever shows amounts in your currency.
+function homeRatesArrived() {
+  if (tabShown('dashboard')) renderDashboard();
+  if (tabShown('reports')) renderReports();
+  renderHistory(); renderOverdue();
+}
+
+// Everything the dashboard and the assistant say about money: for one currency, or for 'all' of them
+// in yours.
+function moneyFacts(view, today = todayIso()) {
+  const all = view === 'all', cur = all ? homeCur() : view;
+  const list = all ? realInvoices() : realInvoices().filter(h => invCur(h) === view);
+  const val = all ? homeValue : h => num(h.total);
+  let missing = 0;
+  const v = h => { const x = val(h); if (x == null) { missing++; return 0; } return x; };
   const thisM = monthKey(today), lastM = shiftMonth(thisM, -1), lastY = shiftMonth(thisM, -12);
-  const invoicedIn = m => sumBy(list.filter(h => monthKey(h.inv.date) === m), h => h.total);
-  const paidIn = m => sumBy(list.filter(h => h.paidAt && monthKey(h.paidAt) === m), h => h.total);
+  const invoicedIn = m => sumBy(list.filter(h => monthKey(h.inv.date) === m), v);
+  const paidIn = m => sumBy(list.filter(h => h.paidAt && monthKey(h.paidAt) === m), v);
   const owed = list.filter(isOwedStatus), overdue = list.filter(h => payStatus(h).key === 'overdue');
   const months = monthsBack(12, today);
-  const yearStart = today.slice(0, 4) + '-01-01';
+  const year = today.slice(0, 4), yearStart = year + '-01-01';
+  const inYear = list.filter(h => h.inv.date >= yearStart && h.inv.date <= today);
+  const paidInYear = list.filter(h => h.paidAt && h.paidAt >= yearStart && h.paidAt <= today);
   const byClient = {};
   for (const h of list.filter(x => monthKey(x.inv.date) >= months[0])) {
     const k = h.c.company || 'Client';
     byClient[k] ||= { name: k, id: h.c.id, total: 0, count: 0 };
-    byClient[k].total = round2(byClient[k].total + num(h.total)); byClient[k].count++;
+    byClient[k].total = round2(byClient[k].total + v(h)); byClient[k].count++;
   }
   const debtors = {};
   for (const h of owed) {
-    const k = h.c.company || 'Client';
-    debtors[k] ||= { name: k, id: h.c.id, total: 0, count: 0, overdue: 0 };
-    debtors[k].total = round2(debtors[k].total + num(h.total)); debtors[k].count++;
+    const k = `${h.c.company || 'Client'}\u0000${invCur(h)}`;
+    debtors[k] ||= { name: h.c.company || 'Client', id: h.c.id, cur: all ? cur : invCur(h), from: invCur(h), total: 0, count: 0, overdue: 0, own: 0 };
+    debtors[k].total = round2(debtors[k].total + v(h)); debtors[k].own = round2(debtors[k].own + num(h.total)); debtors[k].count++;
     if (payStatus(h).key === 'overdue') debtors[k].overdue++;
   }
+  // The year, per currency, each also in yours (for the split).
+  const split = all ? dashCurrencies().map(c => {
+    const iy = inYear.filter(h => invCur(h) === c), py = paidInYear.filter(h => invCur(h) === c);
+    return { cur: c, invoiced: sumBy(iy, h => h.total), paid: sumBy(py, h => h.total), invoicedHome: sumBy(iy, v), paidHome: sumBy(py, v), count: iy.length };
+  }).filter(s => s.count || s.paid) : [];
   return {
-    cur, today, thisM, lastM, lastY, months, list,
-    invoiced: { thisM: invoicedIn(thisM), lastM: invoicedIn(lastM), lastY: invoicedIn(lastY), year: sumBy(list.filter(h => h.inv.date >= yearStart && h.inv.date <= today), h => h.total), last12: sumBy(list.filter(h => monthKey(h.inv.date) >= months[0]), h => h.total) },
-    paid: { thisM: paidIn(thisM), lastM: paidIn(lastM) },
+    view, all, cur, today, year, thisM, lastM, lastY, months, list,
+    invoiced: { thisM: invoicedIn(thisM), lastM: invoicedIn(lastM), lastY: invoicedIn(lastY), year: sumBy(inYear, v), last12: sumBy(list.filter(h => monthKey(h.inv.date) >= months[0]), v) },
+    paid: { thisM: paidIn(thisM), lastM: paidIn(lastM), year: sumBy(paidInYear, v) },
     count: { thisM: list.filter(h => monthKey(h.inv.date) === thisM).length },
-    owed: { total: sumBy(owed, h => h.total), count: owed.length, list: owed },
-    overdue: { total: sumBy(overdue, h => h.total), count: overdue.length, list: overdue },
+    owed: { total: sumBy(owed, v), own: all ? null : sumBy(owed, h => h.total), count: owed.length, list: owed },
+    overdue: { total: sumBy(overdue, v), own: all ? null : sumBy(overdue, h => h.total), count: overdue.length, list: overdue },
     series: months.map(m => ({ m, invoiced: invoicedIn(m), paid: paidIn(m) })),
     topClients: Object.values(byClient).sort((a, b) => b.total - a.total),
     debtors: Object.values(debtors).sort((a, b) => b.total - a.total),
+    split, missing: missing > 0,
   };
 }
 // Invoices with no paid status (saved before 1.12.0 and never marked paid or unpaid): not counted as owed,
@@ -61,16 +135,17 @@ function openQuotes(cur) {
   const today = todayIso();
   return invoices.filter(h => docType(h) === 'quote' && !h.convertedTo && (!h.inv.due || h.inv.due >= today) && (!cur || invCur(h) === cur));
 }
-// What sold best in the last 12 months (stock lines on invoices), in one currency.
-function bestSellers(cur, since) {
-  const out = {};
-  for (const h of realInvoices().filter(x => invCur(x) === cur && x.inv.date >= since)) {
+// What sold best in the last 12 months (stock lines on invoices): in one currency, or all in yours.
+function bestSellers(view, since) {
+  const out = {}, all = view === 'all';
+  for (const h of realInvoices().filter(x => (all || invCur(x) === view) && x.inv.date >= since)) {
     for (const it of h.inv.items || []) {
       if (!it.stockId || it.kind !== 'item') continue;
       const s = stockItem(it.stockId), k = it.stockId;
+      const amount = lineAmount(it, h.c) - lineDiscount(it, h.c), inView = all ? toHome(amount, invCur(h)) : amount;
       out[k] ||= { id: k, name: s ? s.name : it.desc, unit: s ? s.unit : it.unit, qty: 0, sales: 0 };
       out[k].qty = round3(out[k].qty + num(it.qty));
-      out[k].sales = round2(out[k].sales + lineAmount(it, h.c) - lineDiscount(it, h.c));
+      out[k].sales = round2(out[k].sales + (inView || 0));
     }
   }
   return Object.values(out).sort((a, b) => b.sales - a.sales);
@@ -96,23 +171,36 @@ function niceMax(v) {
 // ---------- the Dashboard tab ----------
 let dashCur = '', dashTable = false;
 function renderDashboard() {
-  const curs = dashCurrencies();
-  if (!curs.includes(dashCur)) dashCur = curs[0];
+  const curs = dashCurrencies(), home = homeCur();
+  const views = home && (curs.length > 1 || curs[0] !== home) ? ['all', ...curs] : curs;
+  if (!views.includes(dashCur)) dashCur = views[0];
   const sel = $('#dash-cur');
-  sel.innerHTML = curs.map(c => `<option value="${c}">${c} (${esc(curSymbol(c))})</option>`).join('');
-  sel.value = dashCur; sel.hidden = curs.length < 2;
-  const f = moneyFacts(dashCur), cur = dashCur, M = v => money(v, cur);
-  $('#dash-sub').textContent = `${monthName(f.thisM)} so far · ${cur}`;
-  const quotes = openQuotes(cur);
+  sel.innerHTML = views.map(c => c === 'all' ? `<option value="all">All, in ${home} (${esc(curSymbol(home))})</option>` : `<option value="${c}">${c} only (${esc(curSymbol(c))})</option>`).join('');
+  sel.value = dashCur; sel.hidden = views.length < 2;
+  if (home) loadTodayRates();
+  const f = moneyFacts(dashCur), cur = f.cur, M = v => money(v, cur);
+  // In one currency, what's owed also shows today's value in yours.
+  const inHome = amount => f.all ? '' : homeNote(amount, cur);
+  $('#dash-sub').textContent = `${monthName(f.thisM)} so far · ${f.all ? `all currencies in ${cur}` : cur}${f.missing ? (todayError ? ` · couldn't get today's rates (${todayError})` : " · getting today's rates…") : ''}`;
+  const quotes = openQuotes(f.all ? '' : cur), quoteValue = f.all ? sumBy(quotes, h => toHome(h.total, invCur(h))) : sumBy(quotes, h => h.total);
   const tile = (label, value, sub, cls = '', go = '') => `<div class="tile ${cls}"${go ? ` data-go-tab="${go}" role="button" tabindex="0"` : ''}><div class="tile-label">${label}</div><div class="tile-value">${value}</div><div class="tile-sub">${sub || '&nbsp;'}</div></div>`;
   $('#dash-tiles').innerHTML = [
     tile(`Invoiced in ${MONTHS[parseDate(f.thisM + '-01').getMonth()]}`, M(f.invoiced.thisM), [changeText(f.invoiced.thisM, f.invoiced.lastM, 'last month'), f.invoiced.lastY ? changeText(f.invoiced.thisM, f.invoiced.lastY, monthName(f.lastY, true)) : ''].filter(Boolean).map(esc).join('<br>')),
     tile('Paid to you this month', M(f.paid.thisM), esc(changeText(f.paid.thisM, f.paid.lastM, 'last month'))),
-    tile('Owed to you', M(f.owed.total), `${f.owed.count} unpaid invoice${f.owed.count === 1 ? '' : 's'}`, '', 'history'),
-    tile('Overdue', M(f.overdue.total), f.overdue.count ? `⚠ ${f.overdue.count} past the due date` : '✓ Nothing overdue', f.overdue.count ? 'bad' : 'good', 'history'),
-    tile(`Invoiced in ${f.today.slice(0, 4)}`, M(f.invoiced.year), `${M(f.invoiced.last12)} in the last 12 months`),
-    tile('Open quotes', M(sumBy(quotes, h => h.total)), `${quotes.length} not yet invoiced`, '', 'history'),
+    tile('Owed to you', M(f.owed.total) + inHome(f.owed.total), `${f.owed.count} unpaid invoice${f.owed.count === 1 ? '' : 's'}`, '', 'history'),
+    tile('Overdue', M(f.overdue.total) + inHome(f.overdue.total), f.overdue.count ? `⚠ ${f.overdue.count} past the due date` : '✓ Nothing overdue', f.overdue.count ? 'bad' : 'good', 'history'),
+    tile(`Earned in ${f.year}`, M(f.paid.year) + inHome(f.paid.year), `Paid to you · ${M(f.invoiced.year)} invoiced`),
+    tile('Open quotes', M(quoteValue), `${quotes.length} not yet invoiced`, '', 'history'),
   ].join('');
+  // The year split by currency (All view).
+  $('#dash-split-card').hidden = !f.all || f.split.length < 1;
+  if (f.all) {
+    const totalPaid = f.paid.year || 1;
+    $('#dash-split').innerHTML = `<table><thead><tr><th>Currency</th><th class="num">Invoiced in ${f.year}</th><th class="num">Earned (paid)</th><th class="num">In ${cur}</th><th class="num">Share</th></tr></thead><tbody>${f.split.map(s => `<tr>
+      <td><button class="link" data-dash-cur="${esc(s.cur)}" title="Show ${esc(s.cur)} only">${esc(s.cur)}</button></td><td class="num">${esc(money(s.invoiced, s.cur))}</td><td class="num">${esc(money(s.paid, s.cur))}</td>
+      <td class="num">${esc(money(s.paidHome, cur))}</td><td class="num">${f.paid.year ? Math.round(s.paidHome / totalPaid * 100) + '%' : '–'}</td></tr>`).join('')}
+      <tr class="sum-row"><td><b>All</b></td><td></td><td></td><td class="num"><b>${esc(money(f.paid.year, cur))}</b></td><td class="num">100%</td></tr></tbody></table>`;
+  }
   renderDashChart(f);
   // Top clients, last 12 months.
   const top = f.topClients.slice(0, 6), max = Math.max(1, ...top.map(c => c.total));
@@ -120,7 +208,7 @@ function renderDashboard() {
     <div class="hbar-val">${esc(M(c.total))}</div><div class="hbar-track"><div class="hbar-fill" style="width:${Math.max(1, c.total / max * 100)}%"></div></div></div>`).join('')
     : '<p class="muted">No invoices in the last 12 months.</p>';
   // Best-selling stock.
-  const best = bestSellers(cur, f.months[0] + '-01').slice(0, 6);
+  const best = bestSellers(dashCur, f.months[0] + '-01').slice(0, 6);
   $('#dash-stock-card').hidden = !stock.length;
   $('#dash-stock').innerHTML = best.length ? `<table><thead><tr><th>Item</th><th class="num">Sold</th><th class="num">Sales</th></tr></thead><tbody>${best.map(b => `<tr><td>${esc(b.name)}</td><td class="num">${esc(qtyText(b.qty, b))}</td><td class="num">${esc(M(b.sales))}</td></tr>`).join('')}</tbody></table>`
     : '<p class="muted">No stock sold on invoices in the last 12 months yet.</p>';
@@ -140,10 +228,10 @@ function insights(f) {
   if (best && best.invoiced) out.push({ text: `Your best month in the last year was ${monthName(best.m)}, with ${M(best.invoiced)} invoiced.` });
   const low = liveItems().filter(s => isLow(s));
   if (low.length) out.push({ text: `<b>${low.length} stock item${low.length === 1 ? ' is' : 's are'} low</b>: ${esc(low.slice(0, 3).map(s => s.name).join(', '))}${low.length > 3 ? '…' : ''}.`, tone: 'down', go: 'stock', label: 'Stock' });
-  const unknown = unknownStatus(f.cur);
+  const unknown = unknownStatus(f.all ? '' : f.cur);
   if (unknown.length) out.push({ text: `${unknown.length} older invoice${unknown.length === 1 ? ' has' : 's have'} no paid status, so ${unknown.length === 1 ? "it isn't" : "they aren't"} counted as owed: ${esc(unknown.slice(0, 4).map(h => h.inv.number).join(', '))}${unknown.length > 4 ? '…' : ''}. Mark ${unknown.length === 1 ? 'it' : 'them'} paid or unpaid in History.`, tone: 'down', go: 'history', label: 'History' });
-  const q = openQuotes(f.cur);
-  if (q.length) out.push({ text: `${q.length} quote${q.length === 1 ? '' : 's'} worth ${M(sumBy(q, h => h.total))} ${q.length === 1 ? 'is' : 'are'} still open.`, go: 'history', label: 'History' });
+  const q = openQuotes(f.all ? '' : f.cur);
+  if (q.length) out.push({ text: `${q.length} quote${q.length === 1 ? '' : 's'} worth ${M(sumBy(q, h => f.all ? toHome(h.total, invCur(h)) : h.total))} ${q.length === 1 ? 'is' : 'are'} still open.`, go: 'history', label: 'History' });
   return out;
 }
 // Invoiced and paid by month, as grouped bars (one y-axis, money).
@@ -185,6 +273,7 @@ function renderDashChart(f) {
   svg.onmouseleave = () => { tip.hidden = true; $$('#dash-chart rect.hit').forEach(x => x.classList.remove('on')); };
 }
 $('#dash-cur').onchange = e => { dashCur = e.target.value; renderDashboard(); };
+$('#dash-split').addEventListener('click', e => { const b = e.target.closest('[data-dash-cur]'); if (b) { dashCur = b.dataset.dashCur; renderDashboard(); } });
 $('#dash-chart-toggle').onclick = () => { dashTable = !dashTable; renderDashboard(); };
 $('section[data-tab="dashboard"]').addEventListener('click', e => { const t = e.target.closest('[data-go-tab]'); if (t) go(t.dataset.goTab); });
 $('section[data-tab="dashboard"]').addEventListener('keydown', e => { const t = e.target.closest('.tile[data-go-tab]'); if (t && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(t.dataset.goTab); } });

@@ -65,7 +65,8 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 - **Old PDF invoices:** on History, click **Add old PDFs…** and choose the files. Invaro reads each PDF on your computer and suggests its client, number, dates, total and VAT; you check them in a table, and each PDF is copied into its client's folder and shown in History as it is.
 
 ### How it's going
-- **Dashboard:** this month against last month and the same month last year, what's been paid, what you're owed and what's overdue, open quotes, a chart of the last 12 months (invoiced and paid), your top clients and best-selling stock, and a short list of things worth knowing, each with a button to act on it.
+- **Your currency:** set it in **My details**. Amounts owed to you in other currencies then show what they're worth in yours today, in brackets, e.g. £1786.00 (R39912), in History, the overdue bars, Reports, the Dashboard and Ask Invaro, at Standard Bank's, Absa's or Nedbank's buying rate.
+- **Dashboard:** with your currency set, it adds everything up in it (paid invoices at the rate on the day they were paid where Invaro has one, the rest at today's rate), shows what you've earned this year, and splits the year by currency; pick a single currency to see it on its own. It also shows this month against last month and the same month last year, what's been paid, what you're owed and what's overdue, open quotes, a chart of the last 12 months (invoiced and paid), your top clients and best-selling stock, and a short list of things worth knowing, each with a button to act on it.
 - **Ask Invaro:** click **💬 Ask** (or press Ctrl+K) and ask in your own words: "who owes me money?", "how much did I invoice in October?", "what's low on stock?", "how do I make a quote?". It answers from your own data and Invaro's help, with buttons that take you to the right place. It's built into Invaro and runs on your computer: nothing you type is sent anywhere.
 
 ### Your look

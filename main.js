@@ -586,6 +586,11 @@ ipcMain.handle('update:info', () => {
 });
 ipcMain.handle('update:releases', () => UPDATE_REPO && shell.openExternal(`https://github.com/${UPDATE_REPO}/releases`));
 
+// Exchange rates for Reports in rand: Standard Bank's T/T buying rate for an invoice's date (see fx.js).
+let fxApi = null;
+const fx = () => fxApi || (fxApi = require('./fx')(path.join(app.getPath('userData'), 'fx-cache.json')));
+ipcMain.handle('fx:rate', safe((_e, currency, date) => fx().rate(currency, date)));
+
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('shell:open', (_e, p) => shell.openPath(p));
 ipcMain.handle('shell:show', (_e, p) => shell.showItemInFolder(p));

@@ -662,6 +662,8 @@ $('#download').onclick = async () => {
   if (previous) {
     entry.paidAt = previous.paidAt; entry.tracked = previous.tracked;
     if (previous.convertedTo) entry.convertedTo = previous.convertedTo; // a quote remembers its invoice
+    // Its exchange rate stays while the date and currency do (a rate typed in included).
+    if (previous.fx && previous.inv.date === entry.inv.date && curCode(previous.c.currency) === curCode(entry.c.currency)) entry.fx = previous.fx;
     const steps = carryPaidSteps(previous, entry.lines);
     if (steps) entry.paidSteps = steps;
   }
@@ -671,6 +673,7 @@ $('#download').onclick = async () => {
   const idx = invoices.findIndex(h => h.inv.number === entry.inv.number);
   if (idx >= 0) invoices[idx] = entry; else invoices.unshift(entry);
   persist('invoices');
+  captureFx(entry); // the rand rate on the invoice date, for Reports (in the background)
   settings.nextNumber = nextNumberValue('invoice');
   settings.nextQuoteNumber = nextNumberValue('quote');
   // Done: back to what you were drafting before the edit, or on to the next one for the same client,
@@ -1102,6 +1105,60 @@ function reportRows(p) {
     return { h, cur: curCode(h.c.currency), subtotal, tax, total: Number(h.total) || 0, status: payStatus(h) };
   });
 }
+// ---------- rand values: exchange rates on each invoice's date ----------
+// With "Also show totals in rand" on (settings.reportCurrency = 'ZAR', kept on this computer), every
+// invoice in another currency is converted at Standard Bank's T/T buying rate for its invoice date
+// (fx.js): today's rate for an invoice dated today, otherwise that day's 16:00 closing rate, or the
+// last business day's before. The rate is stored on the invoice (h.fx.ZAR = { rate, on, kind, source }),
+// so the report never changes afterwards; kind 'manual' is a rate you typed in yourself.
+const reportCur = () => settings.reportCurrency || '';
+const fxMemo = {}; // rates for invoices this computer mayn't change (an accountant's view), kept in memory
+const fxTried = new Set(); // invoices whose rate couldn't be found this session (not tried again)
+let fxBusy = false, fxError = '';
+// Whether this computer may store the rate on the invoice (the team's roles decide who changes invoices).
+const canStoreFx = h => !teamState.team || !!h.private || can('editBilling') || (can('createInvoices') && !h.savedBy);
+function fxOf(h, to) {
+  if (curCode(h.c.currency) === to) return { rate: 1, kind: 'same' };
+  return (h.fx && h.fx[to]) || fxMemo[`${h.inv.number}|${to}`] || null;
+}
+function setFx(h, to, v) {
+  if (!canStoreFx(h)) { fxMemo[`${h.inv.number}|${to}`] = v; return false; }
+  if (v) h.fx = { ...(h.fx || {}), [to]: v };
+  else if (h.fx) { delete h.fx[to]; if (!Object.keys(h.fx).length) delete h.fx; }
+  return true;
+}
+const fxLabel = f => !f ? '' : f.kind === 'manual' ? 'Your rate'
+  : f.kind === 'opening' ? `Standard Bank, ${shortDate(f.on)} ${f.on.slice(0, 4)} (rate when invoiced)`
+  : `Standard Bank, ${shortDate(f.on)} ${f.on.slice(0, 4)} closing`;
+// Looks up the missing rates one at a time, then shows the report again.
+async function fillRates(rows, to) {
+  const missing = rows.filter(r => !fxOf(r.h, to) && !fxTried.has(r.h.inv.number));
+  if (fxBusy || !missing.length || !store.fxRate) return;
+  fxBusy = true; fxError = ''; renderReports();
+  let stored = false;
+  for (const r of missing) {
+    const res = await store.fxRate(r.cur, r.h.inv.date);
+    if (!res || res.error) { missing.forEach(x => { if (!fxOf(x.h, to)) fxTried.add(x.h.inv.number); }); fxError = (res && res.error) || 'no answer'; break; }
+    stored = setFx(r.h, to, { rate: res.rate, on: res.on, kind: res.kind, source: res.source }) || stored;
+  }
+  fxBusy = false;
+  if (stored) persist('invoices');
+  if (tabShown('reports')) renderReports();
+}
+// When an invoice in another currency is saved, its rate is taken there and then.
+async function captureFx(entry) {
+  const to = reportCur();
+  if (!to || !store.fxRate || docType(entry) !== 'invoice' || curCode(entry.c.currency) === to || fxOf(entry, to)) return;
+  const res = await store.fxRate(curCode(entry.c.currency), entry.inv.date);
+  if (!res || res.error) return; // Reports tries again later
+  const h = invoices.find(x => x.inv.number === entry.inv.number);
+  if (h && setFx(h, to, { rate: res.rate, on: res.on, kind: res.kind, source: res.source })) persist('invoices');
+}
+$('#rep-zar').onchange = e => {
+  settings.reportCurrency = e.target.checked ? 'ZAR' : ''; persist('settings');
+  fxTried.clear(); renderReports();
+};
+
 function renderReports() {
   const { list, current } = reportPeriods();
   const sel = $('#rep-period');
@@ -1111,6 +1168,24 @@ function renderReports() {
   const p = list.find(x => x.id === sel.value);
   const rows = reportRows(p);
   $('#rep-range').textContent = `${shortDate(p.from)} ${p.from.slice(0, 4)} to ${shortDate(p.to)} ${p.to.slice(0, 4)} · ${rows.length} invoice${rows.length === 1 ? '' : 's'}`;
+  const to = reportCur();
+  $('#rep-zar').checked = !!to;
+  // Rand values: each row's amounts at its invoice's rate (null until the rate is known).
+  const foreign = to ? rows.filter(r => r.cur !== to) : [];
+  for (const r of rows) {
+    const f = to && fxOf(r.h, to);
+    r.fx = f || null;
+    r.home = f ? { subtotal: round2(r.subtotal * f.rate), tax: round2(r.tax * f.rate), total: round2(r.total * f.rate) } : null;
+  }
+  const waiting = foreign.filter(r => !r.fx).length;
+  const fxNote = $('#rep-fx');
+  fxNote.hidden = !to || (!waiting && !fxBusy);
+  fxNote.className = 'drive-status' + (fxError && waiting ? ' err' : '');
+  fxNote.textContent = !store.fxRate ? 'Exchange rates are only available in the desktop app.'
+    : fxBusy ? `Getting Standard Bank's rates for ${waiting} invoice${waiting === 1 ? '' : 's'}…`
+    : fxError ? `Couldn't get Standard Bank's rate for ${waiting} invoice${waiting === 1 ? '' : 's'} (${fxError}). Type the rate in yourself below, or switch rand off and on again to retry.`
+    : '';
+  if (to && waiting && !fxBusy) fillRates(rows, to);
   if (!rows.length) { $('#rep-body').innerHTML = '<p class="muted">No invoices in this period.</p>'; return; }
   const sum = (arr, f) => round2(arr.reduce((s, r) => s + f(r), 0));
   const byCur = [...new Set(rows.map(r => r.cur))];
@@ -1123,25 +1198,73 @@ function renderReports() {
       money(sum(r.filter(x => x.status.key === 'paid'), x => x.total), cur),
       money(sum(r.filter(x => x.status.key === 'unpaid' || x.status.key === 'overdue'), x => x.total), cur)]);
   }).join(''));
+  // Everything in rand, at each invoice's own rate.
+  const home = (arr, f) => arr.some(r => !r.home) ? null : round2(arr.reduce((s, r) => s + f(r.home), 0));
+  const homeMoney = v => v == null ? '<span class="muted" title="Waiting for an exchange rate">…</span>' : money(v, to);
+  const isPaid = x => x.status.key === 'paid', isOwed = x => x.status.key === 'unpaid' || x.status.key === 'overdue';
+  if (to && foreign.length) {
+    html += `<h3>All in rand (${to})</h3>` + table(['', 'Invoices', 'Excl. ' + label, label, 'Total', 'Paid', 'Outstanding'],
+      tr(['All currencies', rows.length, homeMoney(home(rows, h => h.subtotal)), homeMoney(home(rows, h => h.tax)), `<b>${homeMoney(home(rows, h => h.total))}</b>`,
+        homeMoney(home(rows.filter(isPaid), h => h.total)), homeMoney(home(rows.filter(isOwed), h => h.total))]));
+  }
+  const showHome = to && foreign.length;
   const clientsIn = [...new Set(rows.map(r => `${r.h.c.company}\u0000${r.cur}`))];
-  html += '<h3>By client</h3>' + table(['Client', 'Invoices', 'Total', 'Paid', 'Outstanding'], clientsIn.map(k => {
+  html += '<h3>By client</h3>' + table(['Client', 'Invoices', 'Total', 'Paid', 'Outstanding', ...(showHome ? [`Total in ${to}`] : [])], clientsIn.map(k => {
     const [name, cur] = k.split('\u0000'); const r = rows.filter(x => x.h.c.company === name && x.cur === cur);
-    return tr([esc(name), r.length, money(sum(r, x => x.total), cur), money(sum(r.filter(x => x.status.key === 'paid'), x => x.total), cur),
-      money(sum(r.filter(x => x.status.key === 'unpaid' || x.status.key === 'overdue'), x => x.total), cur)]);
+    return tr([esc(name), r.length, money(sum(r, x => x.total), cur), money(sum(r.filter(isPaid), x => x.total), cur),
+      money(sum(r.filter(isOwed), x => x.total), cur), ...(showHome ? [homeMoney(home(r, h => h.total))] : [])]);
   }).join(''));
   const months = [...new Set(rows.map(r => r.h.inv.date.slice(0, 7)))].sort();
-  html += '<h3>By month</h3>' + table(['Month', ...byCur], months.map(m => {
-    const d = parseDate(m + '-01');
-    return tr([`${MONTHS[d.getMonth()]} ${d.getFullYear()}`, ...byCur.map(cur => money(sum(rows.filter(x => x.cur === cur && x.h.inv.date.startsWith(m)), x => x.total), cur))]);
+  html += '<h3>By month</h3>' + table(['Month', ...byCur, ...(showHome ? [`All in ${to}`] : [])], months.map(m => {
+    const d = parseDate(m + '-01'), inM = rows.filter(x => x.h.inv.date.startsWith(m));
+    return tr([`${MONTHS[d.getMonth()]} ${d.getFullYear()}`, ...byCur.map(cur => money(sum(inM.filter(x => x.cur === cur), x => x.total), cur)),
+      ...(showHome ? [homeMoney(home(inM, h => h.total))] : [])]);
   }).join(''));
+  // The rate behind each invoice in another currency; type a rate in to use your own.
+  if (showHome) {
+    const editable = r => canStoreFx(r.h) || !teamState.team;
+    html += `<h3>Exchange rates</h3><p class="muted">Rand per unit of each invoice's currency: Standard Bank's T/T buying rate (what the bank pays you) on the invoice date, unless you type in your own.</p>`
+      + `<table class="report fx"><thead><tr><th>Invoice</th><th>Date</th><th>Client</th><th class="num">Total</th><th class="num">Rate</th><th>From</th><th class="num">In ${to}</th></tr></thead><tbody>`
+      + foreign.sort((a, b) => a.h.inv.date.localeCompare(b.h.inv.date)).map(r => `<tr>
+        <td>${esc(r.h.inv.number)}</td><td>${esc(r.h.inv.date)}</td><td>${esc(r.h.c.company)}</td>
+        <td class="num">${money(r.total, r.cur)}</td>
+        <td class="num"><input class="fx-rate" type="number" step="0.0001" min="0" data-fx="${esc(r.h.inv.number)}" value="${r.fx ? r.fx.rate : ''}" placeholder="${fxBusy ? '…' : 'Rate'}" ${editable(r) ? '' : 'readonly title="Only an admin, or whoever saved it, can change the rate on a shared invoice"'}></td>
+        <td class="muted">${esc(fxLabel(r.fx))}${r.fx && r.fx.kind === 'manual' && editable(r) ? ` <button class="link" data-fx-reset="${esc(r.h.inv.number)}" title="Use Standard Bank's rate for this date again">Use Standard Bank's</button>` : ''}</td>
+        <td class="num">${homeMoney(r.home && r.home.total)}</td></tr>`).join('')
+      + '</tbody></table>';
+  }
   $('#rep-body').innerHTML = html;
 }
+// Typing a rate in: it's yours from then on (the report uses it, and it's saved on the invoice).
+$('#rep-body').addEventListener('change', e => {
+  const n = e.target.dataset.fx; if (!n) return;
+  const h = invoices.find(x => x.inv.number === n), to = reportCur(); if (!h || !to) return;
+  const v = parseFloat(e.target.value);
+  setFx(h, to, v > 0 ? { rate: v, on: h.inv.date, kind: 'manual', source: 'Your rate' } : null);
+  if (!(v > 0)) fxTried.delete(n); // cleared: look up Standard Bank's again
+  persist('invoices'); renderReports();
+});
+$('#rep-body').addEventListener('click', e => {
+  const n = e.target.dataset.fxReset; if (!n) return;
+  const h = invoices.find(x => x.inv.number === n), to = reportCur(); if (!h || !to) return;
+  setFx(h, to, null); fxTried.delete(n); persist('invoices'); renderReports();
+});
 $('#rep-period').onchange = renderReports;
 $('#rep-csv').onclick = () => {
   const { list } = reportPeriods(); const p = list.find(x => x.id === $('#rep-period').value) || list[0];
   const q = v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
-  const lines = [['Invoice', 'Date', 'Due', 'Client', 'Currency', 'Excl. tax', 'Tax', 'Total', 'Status', 'Paid on'].join(',')]
-    .concat(reportRows(p).map(r => [r.h.inv.number, r.h.inv.date, r.h.inv.due || '', r.h.c.company, r.cur, r.subtotal.toFixed(2), r.tax.toFixed(2), r.total.toFixed(2), r.status.key === 'untracked' ? '' : r.status.key, r.h.paidAt || ''].map(q).join(',')));
+  // With rand on, each row also has its rate, where the rate came from, and its amounts in rand.
+  const to = reportCur();
+  const fxCols = to ? [`Rate to ${to}`, 'Rate date', 'Rate from', `Excl. tax (${to})`, `Tax (${to})`, `Total (${to})`] : [];
+  const fxCells = r => {
+    if (!to) return [];
+    const f = fxOf(r.h, to);
+    if (!f) return ['', '', 'No rate yet', '', '', ''];
+    const x = v => (v * f.rate).toFixed(2);
+    return [f.rate, f.on || r.h.inv.date, f.kind === 'same' ? '' : fxLabel(f), x(r.subtotal), x(r.tax), x(r.total)];
+  };
+  const lines = [['Invoice', 'Date', 'Due', 'Client', 'Currency', 'Excl. tax', 'Tax', 'Total', 'Status', 'Paid on', ...fxCols].join(',')]
+    .concat(reportRows(p).map(r => [r.h.inv.number, r.h.inv.date, r.h.inv.due || '', r.h.c.company, r.cur, r.subtotal.toFixed(2), r.tax.toFixed(2), r.total.toFixed(2), r.status.key === 'untracked' ? '' : r.status.key, r.h.paidAt || '', ...fxCells(r)].map(q).join(',')));
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' }));
   a.download = `Invaro report - ${p.label.replace(/[\\/:*?"<>|()]/g, '').replace(/\s+/g, ' ').trim()}.csv`;

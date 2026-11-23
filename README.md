@@ -58,6 +58,7 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 - **Reminders:** pick a day each month for each client on the **Notifications** tab. Your computer then reminds you once a day until you've invoiced them, even when Invaro is closed.
 - **Paid or not:** mark invoices paid in **History**. Unpaid invoices past their due date show as overdue, and you're reminded the day after, then weekly.
 - **Reports:** see what you've invoiced, been paid, are owed and charged in VAT for a tax year (March to February) or calendar year, by client and by month, and export it to a spreadsheet.
+- **In rand:** tick **Also show totals in rand** in Reports to see invoices in pounds, dollars or euros at the rand value on their invoice date, at Standard Bank's T/T buying rate (what the bank pays for the foreign currency). The rate is kept with each invoice, and you can type in your own, such as the rate you actually got.
 
 ### Working together
 - **Teams:** create a team and invite your partner or colleagues by email. Everyone works on the same clients, invoices and business details, kept in sync within seconds. Whoever creates the team is its admin and gives everyone a role:
@@ -93,6 +94,7 @@ Releases also link a **VirusTotal** scan of the Windows installer and the Mac di
 - **Your account (only if you sign in):** your clients, settings, logos and invoice history are synced to your own account, which only you can read. Your PDFs aren't uploaded. **My details → Account & sync → Delete my cloud data** removes it. See the [privacy policy](https://bryceh1996.github.io/Invaro/privacy.html).
 - **Your team (only if you join one):** the team's clients, invoices and business details are shared with its members, and each person sees only what their role allows. Personal clients and invoices stay on your computer.
 - **Reminders:** while at least one client has a reminder or an invoice is unpaid, it schedules a quick check once a day at 9am. On Windows that's a Task Scheduler task called "Invaro reminders"; on a Mac it's a launch agent called `local.invoicer.reminders`, which also checks when you log in. Turning off your last reminder removes it, and on Windows so does uninstalling.
+- **Exchange rates (only with rand reports on):** it reads Standard Bank's public exchange-rates page for the date of each invoice in another currency. Only the date is sent, and each day's rates are remembered on your computer.
 - **Updates:** it checks this repository's releases when it starts and every 30 minutes. It only downloads and installs an update when you click **Restart & update**.
 - **Backups:** saved invoices are copied into `Invaro Backups` (or a folder you pick) inside your `My Drive` folder (Google Drive for desktop) or your `OneDrive` folder, or into any folder you pick, and the sync app uploads them as usual. Without Google Drive for desktop you can instead **Connect Google Drive**: Invaro then uploads each saved PDF to that folder in My Drive or a shared drive you pick, and nothing else. **Disconnect Google Drive** removes its access.
 

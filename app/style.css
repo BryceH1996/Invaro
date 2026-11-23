@@ -95,6 +95,10 @@ input:focus, select:focus, textarea:focus { outline:2px solid rgba(14,124,134,.2
 .items button.disc-btn.on { background:var(--brand); border-color:var(--brand); color:#fff; }
 .items .disc-row { grid-column:2 / -1; display:grid; grid-template-columns:auto 80px 60px 1fr 26px; gap:6px; align-items:center; margin:-2px 0 4px; padding:4px 0 4px 10px; border-left:3px solid var(--brand); font-size:12px; color:var(--slate); }
 .items .disc-row .disc-saving { color:var(--ok-fg); font-weight:600; }
+/* Exchange rates in Reports */
+table.fx input.fx-rate { width:92px; padding:3px 6px; text-align:right; }
+table.fx td { vertical-align:middle; }
+table.fx button.link { display:block; margin-top:2px; }
 /* Editing a saved invoice or quote */
 .edit-bar { display:flex; align-items:center; gap:12px; margin:4px 0 6px; padding:8px 10px; background:var(--warn-bg); color:var(--warn-fg); border-radius:6px; font-size:13px; }
 .edit-bar[hidden] { display:none; }

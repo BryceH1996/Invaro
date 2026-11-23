@@ -1,7 +1,7 @@
 {
   "name": "invaro",
   "productName": "Invaro",
-  "version": "1.22.0",
+  "version": "1.23.0",
   "description": "Desktop invoicing app: saved clients, rates, and PDF invoices.",
   "author": "Invaro",
   "main": "main.js",
@@ -41,6 +41,7 @@
       "cloud.js",
       "team.js",
       "gdrive.js",
+      "fx.js",
       "gdrive.config.json",
       "preload.js",
       "app/**/*",

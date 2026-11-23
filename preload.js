@@ -56,6 +56,7 @@ contextBridge.exposeInMainWorld('api', {
   updateInfo: () => ipcRenderer.invoke('update:info'),
   openReleases: () => ipcRenderer.invoke('update:releases'),
   version: () => ipcRenderer.invoke('app:version'),
+  fxRate: (currency, date) => ipcRenderer.invoke('fx:rate', currency, date),
   dueReminders: () => ipcRenderer.invoke('reminders:due'),
   skipReminder: id => ipcRenderer.invoke('reminders:skip', id),
   onReminders: fn => ipcRenderer.on('reminders', (_e, due) => fn(due)),

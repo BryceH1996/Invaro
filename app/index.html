@@ -337,9 +337,11 @@
     <section data-tab="reports">
       <div class="title-row"><h2>Reports</h2><select id="rep-period"></select></div>
       <p class="muted" id="rep-range"></p>
+      <label class="check" title="Each invoice in another currency is converted at Standard Bank's T/T buying rate (the rand the bank pays for the foreign currency) on its invoice date"><input type="checkbox" id="rep-zar"> Also show totals in rand (ZAR), at Standard Bank's buying rate on each invoice's date</label>
+      <p class="drive-status" id="rep-fx" hidden></p>
       <div id="rep-body"></div>
       <div class="actions"><button class="btn" id="rep-csv">Export to spreadsheet (CSV)</button></div>
-      <p class="muted">Totals include VAT/tax. Quotes aren't counted. Invoices saved before version 1.12.0 have no paid status, so they count as invoiced but not as paid or outstanding until you mark them paid in History.</p>
+      <p class="muted">Totals include VAT/tax. Quotes aren't counted. Rand values use each invoice's own rate, so they stay the same however the rand moves later. Invoices saved before version 1.12.0 have no paid status, so they count as invoiced but not as paid or outstanding until you mark them paid in History.</p>
     </section>
 
     <!-- HISTORY -->

@@ -91,7 +91,7 @@
 
     <!-- STOCK -->
     <section data-tab="stock">
-      <div class="title-row"><h2>Stock</h2><button class="btn" id="st-new">+ New item</button></div>
+      <div class="title-row"><h2>Stock <span class="muted" id="st-count"></span></h2><button class="btn" id="st-new">+ New item</button></div>
       <p class="drive-status" id="st-locked" hidden></p>
       <p class="drive-status err" id="st-sync" hidden></p>
       <div class="stock-filter">
@@ -109,8 +109,8 @@
       <p class="muted" id="st-empty"></p>
       <p class="muted" id="st-value"></p>
 
-      <div id="st-form" hidden>
-        <h3 id="st-title">Stock item</h3>
+      <div id="st-form" class="stock-item" hidden>
+        <div class="title-row"><h3 id="st-title">Stock item</h3><span class="muted" id="st-from-woo" hidden>From your WooCommerce shop</span></div>
         <p class="drive-status" id="st-onhand"></p>
         <div class="stock-adjust" id="st-adjust">
           <select id="st-adj-kind" title="What happened">
@@ -152,10 +152,58 @@
         </div>
       </div>
 
+      <div id="st-import-box">
+        <h3>Import from a spreadsheet</h3>
+        <p class="muted">Add new items and update existing ones from a CSV file (in Excel: File → Save As → CSV). Rows are matched to your items by code, or by name when there's no code. Empty cells leave things as they are. Columns: Code, Item, Category, Supplier, Unit, On hand, Low stock level, Cost, Cost currency, Price GBP / USD / EUR / ZAR (or just Price) and Notes. You see every change before anything is saved.</p>
+        <div class="actions">
+          <button class="btn" id="st-import" type="button">Import CSV…</button>
+          <button class="btn" id="st-template" type="button">Download a template</button>
+          <input type="file" id="st-file" accept=".csv,.txt,.tsv,text/csv" hidden>
+        </div>
+
+        <div id="woo-box" hidden>
+          <h3>Your WooCommerce shop</h3>
+          <p class="drive-status" id="woo-status"></p>
+          <div id="woo-on" class="actions">
+            <button class="btn primary" id="woo-import" type="button">Import from WooCommerce</button>
+            <button class="btn" id="woo-change" type="button">Change key</button>
+            <button class="btn" id="woo-disconnect" type="button">Disconnect</button>
+          </div>
+          <div id="woo-form">
+            <p class="muted">Bring your shop's products in with their names, codes, categories, prices and stock levels. In WordPress, go to WooCommerce → Settings → Advanced → REST API → Add key, choose <b>Read</b> permissions, and copy the key and secret here. Invaro only reads from your shop; the key stays on this computer.</p>
+            <label for="woo-site">Website address</label><input id="woo-site" placeholder="https://shop.example.com" spellcheck="false" autocomplete="off">
+            <div class="row">
+              <div><label for="woo-key">Consumer key</label><input id="woo-key" placeholder="ck_…" spellcheck="false" autocomplete="off"></div>
+              <div><label for="woo-secret">Consumer secret</label><input id="woo-secret" type="password" placeholder="cs_…" spellcheck="false" autocomplete="off"></div>
+            </div>
+            <div class="actions">
+              <button class="btn primary" id="woo-connect" type="button">Connect</button>
+              <button class="btn" id="woo-cancel" type="button" hidden>Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <h3>Stock on invoices</h3>
       <label class="check"><input type="checkbox" id="st-show-sku"> Show item codes on invoices and quotes</label>
       <p class="muted">Saving an invoice takes its stock items off what's on hand. Editing it later changes only the difference, and removing it from History puts the items back. Quotes don't take stock until they're made into an invoice.</p>
       <div class="actions"><button class="btn" id="st-csv" type="button">Export stock list (CSV)</button></div>
+
+      <dialog id="imp-dlg" class="folder-dlg imp-dlg">
+        <h3 id="imp-title">Import stock</h3>
+        <p class="muted" id="imp-note"></p>
+        <div class="imp-opts">
+          <label class="check" id="imp-cur-row"><span>Prices in the Price column are in</span> <select id="imp-cur"></select></label>
+          <label class="check" id="imp-counts-row"><input type="checkbox" id="imp-counts"> Set stock counts from the On hand column</label>
+        </div>
+        <p class="imp-summary" id="imp-summary"></p>
+        <div class="imp-table"><table><thead><tr><th>Code</th><th>Item</th><th>What happens</th><th class="num">Count</th></tr></thead><tbody id="imp-list"></tbody></table></div>
+        <div class="actions">
+          <span style="flex:1"></span>
+          <button class="btn" id="imp-cancel" type="button">Cancel</button>
+          <button class="btn primary" id="imp-go" type="button">Import</button>
+        </div>
+      </dialog>
     </section>
 
     <!-- CLIENTS -->
@@ -450,5 +498,6 @@
 
 <script src="pdf.js"></script>
 <script src="renderer.js"></script>
+<script src="stock.js"></script>
 </body>
 </html>

@@ -600,6 +600,14 @@ ipcMain.handle('fx:rate', safe(async (_e, bank, currency, date) => {
 }));
 ipcMain.handle('fx:rates', safe((_e, currency, date) => fx().rates(currency, date)));
 
+// ---------- WooCommerce products for the Stock tab (woo.js) ----------
+let wooApi = null;
+const woo = () => wooApi || (wooApi = require('./woo').createWoo());
+ipcMain.handle('woo:status', () => woo().status());
+ipcMain.handle('woo:connect', safe((_e, site, key, secret) => woo().connect(site, key, secret)));
+ipcMain.handle('woo:disconnect', () => woo().disconnect());
+ipcMain.handle('woo:products', safe(() => woo().products()));
+
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('shell:open', (_e, p) => shell.openPath(p));
 ipcMain.handle('shell:show', (_e, p) => shell.showItemInFolder(p));

@@ -11,6 +11,7 @@
 <header>
   <h1 class="logo logo--dark" aria-label="Invaro"><svg viewBox="16 2 16 38" aria-hidden="true"><circle cx="24" cy="9" r="6"/><path d="M18 18 H30 V40 L27 37.5 L24 40 L21 37.5 L18 40 Z"/></svg><span aria-hidden="true">nvaro</span></h1>
   <nav>
+    <button data-go="dashboard">Dashboard</button>
     <button data-go="invoice" class="active">New invoice</button>
     <button data-go="clients">Clients</button>
     <button data-go="stock">Stock</button>
@@ -19,6 +20,7 @@
     <button data-go="reports">Reports</button>
     <button data-go="history">History</button>
   </nav>
+  <button class="ask-btn" id="ask-btn" type="button" title="Ask Invaro a question (Ctrl+K)">💬 Ask</button>
   <button class="cloud-pill" id="cloud-pill" hidden title="Account and sync"></button>
   <span class="version" id="app-version"></span>
 </header>
@@ -31,6 +33,24 @@
 <div id="overdue-bars"></div>
 <main>
   <div class="panel">
+
+    <!-- DASHBOARD -->
+    <section data-tab="dashboard">
+      <div class="title-row"><h2>Dashboard</h2><select id="dash-cur" title="Currency"></select></div>
+      <p class="muted" id="dash-sub"></p>
+      <div class="tiles" id="dash-tiles"></div>
+      <div class="card">
+        <div class="title-row"><h3>The last 12 months</h3><button class="link" id="dash-chart-toggle" type="button">Show as table</button></div>
+        <div class="legend"><span><i class="sw inv"></i>Invoiced</span><span><i class="sw paid"></i>Paid</span></div>
+        <div class="chart" id="dash-chart"></div>
+        <div id="dash-chart-table" class="chart-table" hidden></div>
+      </div>
+      <div class="dash-grid">
+        <div class="card"><h3>Worth knowing</h3><ul class="insights" id="dash-insights"></ul></div>
+        <div class="card"><h3>Top clients, last 12 months</h3><div id="dash-clients"></div></div>
+        <div class="card" id="dash-stock-card"><h3>Best-selling stock, last 12 months</h3><div id="dash-stock"></div></div>
+      </div>
+    </section>
 
     <!-- INVOICE -->
     <section data-tab="invoice" class="show">
@@ -102,15 +122,30 @@
         <label class="check"><input type="checkbox" id="st-low"> Low stock only</label>
         <label class="check"><input type="checkbox" id="st-removed"> Show removed items</label>
       </div>
+      <div class="stock-grid">
+      <div class="stock-main">
       <table class="stock" id="st-table">
-        <thead><tr><th>Code</th><th>Item</th><th class="num">On hand</th><th class="num">Price</th></tr></thead>
+        <thead><tr><th class="pic"></th><th>Code</th><th>Item</th><th class="num">On hand</th><th class="num">Price</th></tr></thead>
         <tbody id="st-list"></tbody>
       </table>
       <p class="muted" id="st-empty"></p>
       <p class="muted" id="st-value"></p>
-
+      </div>
+      <aside class="stock-side">
+      <p class="muted stock-hint" id="st-hint">Click an item to see and change it.</p>
       <div id="st-form" class="stock-item" hidden>
-        <div class="title-row"><h3 id="st-title">Stock item</h3><span class="muted" id="st-from-woo" hidden>From your WooCommerce shop</span></div>
+        <div class="stock-head">
+          <div class="stock-pic" id="st-pic"></div>
+          <div>
+            <h3 id="st-title">Stock item</h3>
+            <span class="muted" id="st-from-woo" hidden>From your WooCommerce shop</span>
+            <div class="actions">
+              <button class="btn" id="st-pic-add" type="button">Add picture…</button>
+              <button class="btn" id="st-pic-remove" type="button" hidden>Remove picture</button>
+              <input type="file" id="st-pic-file" accept="image/*" hidden>
+            </div>
+          </div>
+        </div>
         <p class="drive-status" id="st-onhand"></p>
         <div class="stock-adjust" id="st-adjust">
           <select id="st-adj-kind" title="What happened">
@@ -151,8 +186,13 @@
           <button class="btn" id="st-restore" type="button" hidden>Put back in stock</button>
         </div>
       </div>
+      </aside>
+      </div>
 
-      <div id="st-import-box">
+      <p class="drive-status" id="st-pics" hidden></p>
+      <div class="stock-more">
+      <div id="st-import-box" class="stock-more-pair">
+        <div class="card">
         <h3>Import from a spreadsheet</h3>
         <p class="muted">Add new items and update existing ones from a CSV file (in Excel: File → Save As → CSV). Rows are matched to your items by code, or by name when there's no code. Empty cells leave things as they are. Columns: Code, Item, Category, Supplier, Unit, On hand, Low stock level, Cost, Cost currency, Price GBP / USD / EUR / ZAR (or just Price) and Notes. You see every change before anything is saved.</p>
         <div class="actions">
@@ -160,8 +200,9 @@
           <button class="btn" id="st-template" type="button">Download a template</button>
           <input type="file" id="st-file" accept=".csv,.txt,.tsv,text/csv" hidden>
         </div>
+        </div>
 
-        <div id="woo-box" hidden>
+        <div id="woo-box" class="card" hidden>
           <h3>Your WooCommerce shop</h3>
           <p class="drive-status" id="woo-status"></p>
           <div id="woo-on" class="actions">
@@ -170,7 +211,7 @@
             <button class="btn" id="woo-disconnect" type="button">Disconnect</button>
           </div>
           <div id="woo-form">
-            <p class="muted">Bring your shop's products in with their names, codes, categories, prices and stock levels. In WordPress, go to WooCommerce → Settings → Advanced → REST API → Add key, choose <b>Read</b> permissions, and copy the key and secret here. Invaro only reads from your shop; the key stays on this computer.</p>
+            <p class="muted">Bring your shop's products in with their names, codes, categories, prices, stock levels and pictures. In WordPress, go to WooCommerce → Settings → Advanced → REST API → Add key, choose <b>Read</b> permissions, and copy the key and secret here. Invaro only reads from your shop; the key stays on this computer.</p>
             <label for="woo-site">Website address</label><input id="woo-site" placeholder="https://shop.example.com" spellcheck="false" autocomplete="off">
             <div class="row">
               <div><label for="woo-key">Consumer key</label><input id="woo-key" placeholder="ck_…" spellcheck="false" autocomplete="off"></div>
@@ -184,10 +225,13 @@
         </div>
       </div>
 
+      <div class="card">
       <h3>Stock on invoices</h3>
       <label class="check"><input type="checkbox" id="st-show-sku"> Show item codes on invoices and quotes</label>
       <p class="muted">Saving an invoice takes its stock items off what's on hand. Editing it later changes only the difference, and removing it from History puts the items back. Quotes don't take stock until they're made into an invoice.</p>
       <div class="actions"><button class="btn" id="st-csv" type="button">Export stock list (CSV)</button></div>
+      </div>
+      </div>
 
       <dialog id="imp-dlg" class="folder-dlg imp-dlg">
         <h3 id="imp-title">Import stock</h3>
@@ -464,21 +508,24 @@
 
     <!-- REPORTS -->
     <section data-tab="reports">
-      <div class="title-row"><h2>Reports</h2><select id="rep-period"></select></div>
+      <div class="title-row"><h2>Reports</h2><div class="rep-tools"><select id="rep-period" title="Period"></select><button class="btn" id="rep-csv">Export to spreadsheet (CSV)</button></div></div>
       <p class="muted" id="rep-range"></p>
-      <label class="check" title="Paid invoices in another currency are converted at your bank's buying rate (the rand the bank pays for the foreign currency) on the day they're marked paid"><input type="checkbox" id="rep-zar"> Also show what's been paid in rand (ZAR), at a bank's buying rate on the day each invoice was paid</label>
-      <div class="rep-bank" id="rep-bank-row" hidden><label for="rep-bank">Bank</label><select id="rep-bank"><option value="standard">Standard Bank (T/T buying rate)</option><option value="absa">Absa (transfer buying rate)</option><option value="nedbank">Nedbank (cheque &amp; transfer buying rate)</option></select><span class="muted">Marking an invoice paid records every bank's rate that day. Standard Bank also has rates for every past date; Absa and Nedbank only publish today's, so for an invoice marked paid on an earlier day without one, Invaro uses Standard Bank's and says so. FNB, Capitec and Investec don't publish rates Invaro can read.</span></div>
+      <details class="card rep-rand" id="rep-rand">
+        <summary>Totals in rand (ZAR)</summary>
+        <label class="check" title="Paid invoices in another currency are converted at your bank's buying rate (the rand the bank pays for the foreign currency) on the day they're marked paid"><input type="checkbox" id="rep-zar"> Also show what's been paid in rand (ZAR), at a bank's buying rate on the day each invoice was paid</label>
+        <div class="rep-bank" id="rep-bank-row" hidden><label for="rep-bank">Bank</label><select id="rep-bank"><option value="standard">Standard Bank (T/T buying rate)</option><option value="absa">Absa (transfer buying rate)</option><option value="nedbank">Nedbank (cheque &amp; transfer buying rate)</option></select><span class="muted">Marking an invoice paid records every bank's rate that day. Standard Bank also has rates for every past date; Absa and Nedbank only publish today's, so for an invoice marked paid on an earlier day without one, Invaro uses Standard Bank's and says so. FNB, Capitec and Investec don't publish rates Invaro can read.</span></div>
+      </details>
       <p class="drive-status" id="rep-fx" hidden></p>
       <div id="rep-body"></div>
-      <div class="actions"><button class="btn" id="rep-csv">Export to spreadsheet (CSV)</button></div>
       <p class="muted">Totals include VAT/tax. Quotes aren't counted. Rand values use each invoice's own rate, so they stay the same however the rand moves later. Invoices saved before version 1.12.0 have no paid status, so they count as invoiced but not as paid or outstanding until you mark them paid in History.</p>
     </section>
 
     <!-- HISTORY -->
     <section data-tab="history">
       <h2>History</h2>
-      <table>
-        <thead><tr><th>No.</th><th>Client</th><th>Date</th><th class="num">Total</th><th>Status</th><th>Backup</th><th></th></tr></thead>
+      <div class="hist-sel" id="hist-sel" hidden></div>
+      <table class="hist">
+        <thead><tr><th>No.</th><th>Client</th><th>Date</th><th class="num">Total</th><th>Status</th><th class="num" title="Backed up">Backup</th></tr></thead>
         <tbody id="hist"></tbody>
       </table>
       <p class="muted" id="hist-empty">No invoices saved yet.</p>
@@ -486,7 +533,10 @@
 
   </div>
   <div class="preview">
+    <p class="preview-cap" id="preview-cap" hidden></p>
+    <p class="preview-empty" id="preview-empty" hidden></p>
     <iframe id="preview" title="Invoice preview"></iframe>
+    <iframe id="preview2" title="Invoice preview" hidden></iframe>
     <div class="zoom">
       <button id="zoom-out" title="Zoom out" data-key="−">−</button>
       <button id="zoom-level" title="Fit to width" data-key="0"></button>
@@ -494,10 +544,17 @@
     </div>
   </div>
 </main>
+<aside class="ask" id="ask" hidden aria-label="Ask Invaro">
+  <div class="ask-head"><b>Ask Invaro</b><span class="muted">Runs on this computer. Nothing is sent anywhere.</span><button class="x" id="ask-close" title="Close (Esc)">×</button></div>
+  <div class="ask-log" id="ask-log" aria-live="polite"></div>
+  <form class="ask-form" id="ask-form"><input id="ask-q" placeholder="e.g. Who owes me money?" autocomplete="off"><button class="btn primary" type="submit">Ask</button></form>
+</aside>
 <div class="toast" id="toast"><span id="toast-msg"></span><button id="toast-act"></button></div>
 
 <script src="pdf.js"></script>
 <script src="renderer.js"></script>
 <script src="stock.js"></script>
+<script src="dashboard.js"></script>
+<script src="assistant.js"></script>
 </body>
 </html>

@@ -607,6 +607,7 @@ ipcMain.handle('woo:status', () => woo().status());
 ipcMain.handle('woo:connect', safe((_e, site, key, secret) => woo().connect(site, key, secret)));
 ipcMain.handle('woo:disconnect', () => woo().disconnect());
 ipcMain.handle('woo:products', safe(() => woo().products()));
+ipcMain.handle('woo:image', safe((_e, url) => woo().image(url)));
 
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('shell:open', (_e, p) => shell.openPath(p));

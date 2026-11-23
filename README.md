@@ -41,12 +41,12 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 - **Show or hide rates:** untick **Show rates on the PDF** to leave your hourly, daily and unit rates off an invoice or quote, showing just the quantities and amounts. New ones start the way you last chose.
 - **Discounts:** click **%** beside any line to take a percentage or a whole amount off it. The saving shows as its own line under it, and comes off before the total and VAT.
 - **Discount on the whole invoice:** tick **Discount on the whole invoice**, then type a percentage and a reason (e.g. "Loyal customer"). It shows as the last line, with the amount it was taken from, before VAT.
-- **Live preview:** the PDF updates as you type. Zoom with − / +, or Ctrl (⌘ on a Mac) with + / − / 0.
+- **Live preview:** the PDF updates as you type. Zoom with − / +, or Ctrl (⌘ on a Mac) with + / − / 0. On **Clients**, the preview shows how the selected client appears on an invoice; on **My details**, the top and bottom of an example invoice with your details, design and banking.
 - **A folder per client:** **Save invoice** puts the PDF straight into that client's folder, e.g. `Documents/Invaro/Northwind Design Co/Northwind Design Co. Invoice - November 2026 - Alex Morgan.pdf`.
 - **Numbering:** invoice numbers carry on from the last one you saved, and never clash in a team.
 - **Quotes:** switch **New invoice** to **Quote** for a quote with its own numbering and a "valid until" date, then turn it into an invoice with one click. Itemise it with **Item** lines (a quantity at a price each).
 - **Quotes paid in steps:** in **History**, click **Payments** on a quote and tick off each line as the client pays for it. Invaro shows what's been paid and what's still outstanding.
-- **History:** every saved invoice, ready to open, save again, or copy into a new one.
+- **History:** every saved invoice. Click one to see it on the right, then open it, **Show in folder**, save it again, edit it or copy it into a new one.
 - **Edit before you send:** click **Edit** on any saved invoice or quote to change values or add lines, then **Save changes**. It keeps its number, file and paid status, and whatever you were drafting comes back afterwards.
 
 ### Stock
@@ -55,8 +55,13 @@ To remove it, turn off any reminders on the **Notifications** tab first, then dr
 - **Counts that keep themselves:** saving an invoice takes its items off what's on hand. Editing it later changes only the difference, and removing it from History puts the items back. Quotes don't take stock until they're made into an invoice. Invaro warns you before an invoice takes more than you have.
 - **Receive and count:** record stock received, taken out or counted, with a note. Each item keeps its own history, and you can set a level for a low-stock warning.
 - **Import from a spreadsheet:** click **Import CSV…** to add new items and update existing ones from a CSV file (Excel: File → Save As → CSV). Rows match your items by code, or by name when there's no code, and empty cells leave things as they are. You see every change, and every stock count that would change, before anything is saved. **Download a template** shows the columns, and **Export stock list** gives a file you can edit and import again.
+- **Pictures:** add a picture to any item (it's kept small, so it syncs with the item). Pictures show in the stock list and when you add stock to an invoice, and items from your WooCommerce shop bring their shop picture.
 - **Import from your WooCommerce shop:** connect your WordPress shop with a read-only REST API key (WooCommerce → Settings → Advanced → REST API) and click **Import from WooCommerce** to bring in your products, with each variation as an item of its own: names, codes, categories, prices in your shop's currency and stock levels. Run it again whenever your shop changes. Invaro only reads from your shop, and the key stays on your computer.
 - **In a team:** everyone sees the stock and can add it to invoices and quotes; only admins add items, change prices or update counts.
+
+### How it's going
+- **Dashboard:** this month against last month and the same month last year, what's been paid, what you're owed and what's overdue, open quotes, a chart of the last 12 months (invoiced and paid), your top clients and best-selling stock, and a short list of things worth knowing, each with a button to act on it.
+- **Ask Invaro:** click **💬 Ask** (or press Ctrl+K) and ask in your own words: "who owes me money?", "how much did I invoice in October?", "what's low on stock?", "how do I make a quote?". It answers from your own data and Invaro's help, with buttons that take you to the right place. It's built into Invaro and runs on your computer: nothing you type is sent anywhere.
 
 ### Your look
 - **Nine designs:** Classic, Wave, Minimal, Bold, Elegant, Sidebar, Corporate, Mono and Geometric, in any colour, with a second colour on two-tone designs to match your branding, plus your company logo.

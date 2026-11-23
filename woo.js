@@ -7,8 +7,8 @@
 //
 // products() returns every published (or private) product as one row, and each variation of a
 // variable product as a row of its own, e.g. "T-shirt - Large, Blue":
-//   { wooId, name, sku, category, price, stock (a number, or null when the shop doesn't count it) }
-// with the shop's currency.
+//   { wooId, name, sku, category, price, stock (a number, or null when the shop doesn't count it), image (its picture's address) }
+// with the shop's currency. image(url) fetches one picture (the renderer makes the thumbnail).
 const fs = require('fs');
 const path = require('path');
 const { app, safeStorage } = require('electron');
@@ -77,6 +77,8 @@ async function currency(c) {
 const num = v => v === '' || v == null || isNaN(Number(v)) ? null : Number(v);
 const stockOf = p => p.manage_stock && p.stock_quantity != null ? Number(p.stock_quantity) : null;
 const LIVE = ['publish', 'private'];
+const pictureOf = p => (p.images && p.images[0] && p.images[0].src) || '';
+const MAX_PICTURE = 8 * 1024 * 1024;
 
 function createWoo() {
   function status() {
@@ -109,7 +111,7 @@ function createWoo() {
       const category = (p.categories || []).map(x => x.name).filter(Boolean)[0] || '';
       if (p.type === 'variable') { variable.push({ p, category }); continue; }
       if (p.type === 'grouped' || p.type === 'external') continue; // nothing of your own to stock
-      rows.push({ wooId: String(p.id), name: p.name || '', sku: p.sku || '', category, price: num(p.price) ?? num(p.regular_price), stock: stockOf(p) });
+      rows.push({ wooId: String(p.id), name: p.name || '', sku: p.sku || '', category, price: num(p.price) ?? num(p.regular_price), stock: stockOf(p), image: pictureOf(p) });
     }
     // A variable product's variations, a few at a time.
     for (let i = 0; i < variable.length; i += 4) {
@@ -120,7 +122,7 @@ function createWoo() {
           const opts = (v.attributes || []).map(a => a.option).filter(Boolean).join(', ');
           // A variation without its own stock count shares the product's.
           const stock = v.manage_stock === 'parent' ? stockOf(p) : stockOf(v);
-          rows.push({ wooId: `${p.id}/${v.id}`, name: opts ? `${p.name} - ${opts}` : p.name, sku: v.sku || '', category, price: num(v.price) ?? num(v.regular_price), stock });
+          rows.push({ wooId: `${p.id}/${v.id}`, name: opts ? `${p.name} - ${opts}` : p.name, sku: v.sku || '', category, price: num(v.price) ?? num(v.regular_price), stock, image: (v.image && v.image.src) || pictureOf(p) });
         }
       }
     }
@@ -129,7 +131,20 @@ function createWoo() {
     const unescape = s => String(s).replace(/&amp;/g, '&').replace(/&#0?38;/g, '&').replace(/&#8211;/g, '–').replace(/&#8217;/g, '’').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
     return { currency: cur, site: c.site, rows: rows.map(r => ({ ...r, name: unescape(r.name), category: unescape(r.category) })) };
   }
-  return { status, connect, disconnect, products };
+  // One product picture as a data URL. Pictures are public on your shop, so no key is sent.
+  async function image(url) {
+    let u;
+    try { u = new URL(String(url)); } catch (e) { throw new Error('Not a picture address.'); }
+    if (u.protocol !== 'https:') throw new Error('Pictures are only fetched over https://');
+    const res = await fetch(u, { headers: { Accept: 'image/*' } });
+    const type = (res.headers.get('content-type') || '').split(';')[0].trim();
+    if (!res.ok) throw new Error(`Couldn't get the picture (${res.status}).`);
+    if (!/^image\//.test(type)) throw new Error("That address isn't a picture.");
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > MAX_PICTURE) throw new Error('That picture is too big (over 8 MB).');
+    return `data:${type};base64,${buf.toString('base64')}`;
+  }
+  return { status, connect, disconnect, products, image };
 }
 
 module.exports = { createWoo, siteUrl };

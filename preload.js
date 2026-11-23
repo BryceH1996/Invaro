@@ -62,6 +62,7 @@ contextBridge.exposeInMainWorld('api', {
   wooConnect: (site, key, secret) => ipcRenderer.invoke('woo:connect', site, key, secret),
   wooDisconnect: () => ipcRenderer.invoke('woo:disconnect'),
   wooProducts: () => ipcRenderer.invoke('woo:products'),
+  wooImage: url => ipcRenderer.invoke('woo:image', url),
   dueReminders: () => ipcRenderer.invoke('reminders:due'),
   skipReminder: id => ipcRenderer.invoke('reminders:skip', id),
   onReminders: fn => ipcRenderer.on('reminders', (_e, due) => fn(due)),

@@ -2,7 +2,8 @@
 // Loaded after renderer.js, whose helpers ($, esc, money, persist, draft, teamState…) it uses.
 //
 // stock: the items you sell, { id, name, sku, unit, category, supplier, cost, costCurrency,
-//   prices: { ZAR: 1200, GBP: 50 } (a price in each currency you bill in), lowAt, notes, removed, wooId }.
+//   prices: { ZAR: 1200, GBP: 50 } (a price in each currency you bill in), lowAt, notes, removed, wooId,
+//   image (a small JPEG thumbnail as a data URL, so it syncs with the item), imageSrc (the shop picture it came from) }.
 // stockMoves: every change to a count, { id, stockId, qty (+ in / − out), at, why, invoice, note, by },
 //   never changed once made. What's on hand is the sum of an item's moves, so two people saving
 //   invoices at the same time (in a team) never clash over a count.
@@ -20,6 +21,7 @@ const hasLowLevel = s => s.lowAt !== '' && s.lowAt != null;
 const isLow = (s, left = onHand(s.id)) => hasLowLevel(s) && left <= num(s.lowAt);
 const stockMatches = (s, q) => !q || [s.name, s.sku, s.category, s.supplier].some(v => String(v || '').toLowerCase().includes(q));
 const myEmail = () => (teamState.team && teamState.me) || '';
+const thumb = s => s.image ? `<img class="thumb" src="${esc(s.image)}" alt="">` : `<span class="thumb none" aria-hidden="true">📦</span>`;
 const csvCell = v => /[",\r\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? '');
 let liveStockRows = []; // the rows under stock lines on the invoice being drafted (renderItems resets it)
 const refreshStockRows = () => liveStockRows.forEach(r => r.update());
@@ -112,7 +114,7 @@ function renderStockPicker() {
   const list = liveItems().filter(s => stockMatches(s, q)).sort((a, b) => a.name.localeCompare(b.name));
   $('#stock-dlg-list').innerHTML = list.length ? list.map(s => {
     const p = priceIn(s, c.currency), left = onHand(s.id);
-    return `<button type="button" data-pick="${esc(s.id)}"><span class="pick-name">${esc(s.name)}<small>${esc([s.sku, s.category].filter(Boolean).join(' · '))}</small></span>
+    return `<button type="button" data-pick="${esc(s.id)}">${thumb(s)}<span class="pick-name">${esc(s.name)}<small>${esc([s.sku, s.category].filter(Boolean).join(' · '))}</small></span>
       <span class="pick-qty${left <= 0 ? ' none' : ''}">${esc(qtyText(left, s))}</span><span class="pick-price">${p == null ? '<span class="muted">No price</span>' : esc(money(p, c.currency))}</span></button>`;
   }).join('') : '<p class="muted">Nothing matches. Try part of the name, code, category or supplier.</p>';
 }
@@ -215,7 +217,7 @@ function renderStockList() {
     const prices = Object.entries(s.prices || {}).filter(([, v]) => v !== '' && v != null).map(([k, v]) => money(v, k)).join(' · ');
     const left = onHand(s.id), low = isLow(s, left);
     return `<tr data-id="${esc(s.id)}" tabindex="0" class="${s.id === editingStock ? 'on' : ''}${s.removed ? ' removed' : ''}">
-      <td>${esc(s.sku || '')}</td><td>${esc(s.name)}${s.category ? `<div class="muted">${esc(s.category)}</div>` : ''}</td>
+      <td class="pic">${thumb(s)}</td><td>${esc(s.sku || '')}</td><td>${esc(s.name)}${s.category ? `<div class="muted">${esc(s.category)}</div>` : ''}</td>
       <td class="num${left <= 0 ? ' none' : low ? ' low' : ''}">${esc(qtyText(left, s))}${low ? ' <span class="status unpaid">Low</span>' : ''}</td>
       <td class="num">${prices ? esc(prices) : '<span class="muted">–</span>'}</td></tr>`;
   }).join('');
@@ -233,12 +235,16 @@ function renderOnHand(s) {
 function renderStockForm() {
   const s = stockItem(editingStock);
   $('#st-form').hidden = !s;
+  $('#st-hint').hidden = !!s || !stock.length;
   if (!s) return;
   const edit = can('editStock'), locked = !edit || !!s.removed;
   $$('[data-st]').forEach(el => { setVal(el, s[el.dataset.st] ?? ''); el.disabled = locked; });
   $$('[data-price]').forEach(el => { setVal(el, s.prices && s.prices[el.dataset.price] != null ? s.prices[el.dataset.price] : ''); el.disabled = locked; });
   $('#st-title').textContent = s.name || 'Stock item';
   $('#st-from-woo').hidden = !s.wooId;
+  $('#st-pic').innerHTML = s.image ? `<img src="${esc(s.image)}" alt="${esc(s.name)}">` : '<span class="muted">No picture</span>';
+  $('#st-pic-add').hidden = locked; $('#st-pic-add').textContent = s.image ? 'Change picture…' : 'Add picture…';
+  $('#st-pic-remove').hidden = locked || !s.image;
   renderOnHand(s);
   $('#st-adjust').hidden = locked;
   $('#st-adj-unit').textContent = s.unit || '';
@@ -303,6 +309,56 @@ $('#st-restore').onclick = () => {
   toast(`${s.name} is back in your stock`);
 };
 $('#st-show-sku').onchange = e => { settings.stockShowSku = e.target.checked; persist('settings'); renderItems(); refreshPreview(); };
+
+// ---------- pictures ----------
+// Pictures are kept small (up to 320 px, JPEG) so they travel with the item when it syncs.
+const PIC_SIZE = 320;
+function thumbnail(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, PIC_SIZE / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.max(1, Math.round(img.naturalWidth * k)), h = Math.max(1, Math.round(img.naturalHeight * k));
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.drawImage(img, 0, 0, w, h);
+      resolve(cv.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = () => reject(new Error("That file isn't a picture Invaro can read"));
+    img.src = src;
+  });
+}
+$('#st-pic-add').onclick = () => { $('#st-pic-file').value = ''; $('#st-pic-file').click(); };
+$('#st-pic-file').onchange = async e => {
+  const s = stockItem(editingStock), f = e.target.files[0]; if (!s || !f) return;
+  const url = URL.createObjectURL(f);
+  try { s.image = await thumbnail(url); delete s.imageSrc; stockChanged('stock'); }
+  catch (err) { toast(err.message); }
+  finally { URL.revokeObjectURL(url); }
+};
+$('#st-pic-remove').onclick = () => { const s = stockItem(editingStock); if (!s) return; delete s.image; delete s.imageSrc; stockChanged('stock'); };
+// After a WooCommerce import: fetch the pictures that are new or changed, a few at a time.
+let picsBusy = false;
+async function fetchShopPictures() {
+  if (picsBusy || !store.wooImage) return;
+  const todo = liveItems().filter(s => s.wooPic && s.wooPic !== s.imageSrc);
+  if (!todo.length) return;
+  picsBusy = true;
+  let done = 0, failed = 0;
+  const show = () => { $('#st-pics').hidden = false; $('#st-pics').textContent = `Getting pictures from your shop: ${done} of ${todo.length}…`; };
+  show();
+  const work = async s => {
+    const r = await store.wooImage(s.wooPic);
+    if (r && !r.error) { try { s.image = await thumbnail(r); s.imageSrc = s.wooPic; } catch (e) { failed++; } } else failed++;
+    done++; show();
+    if (done % 10 === 0) stockChanged('stock');
+  };
+  const queue = [...todo];
+  await Promise.all(Array.from({ length: 4 }, async () => { while (queue.length) await work(queue.shift()); }));
+  picsBusy = false;
+  $('#st-pics').hidden = true;
+  stockChanged('stock');
+  toast(`${todo.length - failed} picture${todo.length - failed === 1 ? '' : 's'} from your shop${failed ? `; ${failed} couldn't be fetched` : ''}.`);
+}
 
 // ---------- export ----------
 const CSV_COLUMNS = () => ['Code', 'Item', 'Category', 'Supplier', 'Unit', 'On hand', 'Low stock level', 'Cost', 'Cost currency', ...Object.keys(CURRENCIES).map(k => `Price ${k}`), 'Notes'];
@@ -419,6 +475,7 @@ function planImport(rows, setCounts) {
     if (item) {
       for (const f of Object.keys(FIELD_NAMES)) if (r[f] !== undefined && r[f] !== '' && String(r[f]) !== String(item[f] ?? '')) changes.push(FIELD_NAMES[f]);
       for (const [k, v] of Object.entries(r.prices || {})) if (num(v) !== (item.prices && item.prices[k] != null ? num(item.prices[k]) : null)) changes.push(`${k} price`);
+      if (r.wooPic && r.wooPic !== item.imageSrc) changes.push('picture');
       if (item.removed) changes.push('back in stock');
     }
     let count = null;
@@ -443,6 +500,7 @@ function applyImport(plan, source) {
     for (const f of Object.keys(FIELD_NAMES)) if (r[f] !== undefined && r[f] !== '') s[f] = r[f];
     if (Object.keys(r.prices || {}).length) s.prices = { ...(s.prices || {}), ...r.prices };
     if (r.wooId) s.wooId = r.wooId;
+    if (r.wooPic) s.wooPic = r.wooPic;
     delete s.removed;
     if (p.count) {
       const qty = round3(p.count.to - (p.item ? onHand(s.id) : 0));
@@ -499,6 +557,7 @@ $('#imp-go').onclick = () => {
   $('#imp-dlg').close(); imp = null;
   const parts = [r.added && `${r.added} added`, r.updated && `${r.updated} updated`, r.counted && `${r.counted} stock count${r.counted === 1 ? '' : 's'} set`].filter(Boolean);
   toast(`Stock imported: ${parts.join(', ') || 'no changes'}.`);
+  fetchShopPictures();
 };
 
 // A spreadsheet saved as CSV (Excel: File → Save As → CSV).
@@ -565,6 +624,7 @@ $('#woo-import').onclick = async () => {
     if (p.category) row.category = p.category;
     if (cur && p.price != null) row.prices[cur] = p.price;
     if (p.stock != null) row.onHand = p.stock;
+    if (p.image) row.wooPic = p.image;
     return row;
   });
   const untracked = r.rows.filter(p => p.stock == null).length;

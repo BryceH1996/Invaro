@@ -354,16 +354,79 @@ window.addEventListener('keydown', e => {
   else return;
   e.preventDefault();
 });
+// ---------- what the preview shows on each tab ----------
+// New invoice: the invoice being drafted. Clients: an example invoice for the selected client, cropped
+// to the top (your header, their details and the lines). My details: an example invoice cropped to its
+// top (your details, logo and design) and bottom (banking details and notes). History: the invoice
+// you pick. The other tabs use the whole window and have no preview.
+const PREVIEW_TABS = ['invoice', 'clients', 'me', 'history'];
+let currentTab = 'invoice', histPick = null;
+const previewUrls = [];
+// The PDF with its first page narrowed to part of the page (from / to: fractions from the top).
+function croppedUrl(doc, from, to) {
+  let s = doc.output();
+  s = s.replace(/\/MediaBox \[([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+)\]/, (m, x0, y0, w, h) => {
+    const H = Number(h);
+    return `/MediaBox [0 ${(H * (1 - to)).toFixed(2)} ${Number(w).toFixed(2)} ${(H * (1 - from)).toFixed(2)}]`.padEnd(m.length, ' '); // same length: nothing else moves
+  });
+  const bytes = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i) & 255;
+  return URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+}
+// An example invoice: the client's default lines, or one line priced from their rates.
+function sampleInvoice(c) {
+  const today = iso(new Date());
+  const items = c.items && c.items.length ? c.items.map(normItem)
+    : [num(c.dailyRate) ? normItem({ kind: 'days', desc: 'Example: days worked', qty: 5 })
+      : num(c.hourlyRate) ? normItem({ kind: 'hours', desc: 'Example: hours worked', qty: 10 })
+      : normItem({ kind: 'fixed', desc: 'Example line', amount: 1000 })];
+  return { type: 'invoice', number: nextInvoiceNumber('invoice'), date: today, due: addDays(today, c.dueDays || 14), period: today.slice(0, 7), items, hideRates: !!settings.hideRates };
+}
+const sampleClient = () => ({ id: 'sample', company: 'Your client', contacts: 'Their contact', address: 'Their address\nTheir city', currency: usualCurrency(), dueDays: 14, items: [] });
+const draftOptions = (c, inv) => pdfOptions({ me: settings.me || {}, c, inv, lines: docLines(inv, c), pageSize: settings.pageSize, design: settings.design });
+function showPreview(frames, { caption = '', empty = '', zoom = false } = {}) {
+  const box = $('.preview');
+  box.classList.toggle('split', frames.length > 1);
+  $('#preview-empty').hidden = !empty; $('#preview-empty').textContent = empty;
+  $('#preview-cap').hidden = !caption; $('#preview-cap').textContent = caption;
+  $('.zoom').hidden = !zoom;
+  const old = previewUrls.splice(0);
+  [$('#preview'), $('#preview2')].forEach((f, i) => {
+    const fr = frames[i];
+    f.hidden = !fr;
+    if (!fr) { f.removeAttribute('src'); return; }
+    f.title = fr.title || 'Preview';
+    f.src = `${fr.url}#${fr.view || previewView()}&toolbar=0&navpanes=0`;
+    previewUrls.push(fr.url);
+  });
+  setTimeout(() => old.forEach(u => URL.revokeObjectURL(u)), 2000);
+}
 function refreshPreview(delay = 250) {
   clearTimeout(previewTimer);
   previewTimer = setTimeout(() => {
-    const c = client(draft.clientId);
-    if (!c) { $('#preview').removeAttribute('src'); return; }
-    const doc = buildPdf(pdfOptions({ me: settings.me || {}, c, inv: draft, lines: docLines(draft, c), pageSize: settings.pageSize, design: settings.design }));
-    const url = doc.output('bloburl');
-    $('#preview').src = `${url}#${previewView()}&toolbar=0&navpanes=0`;
-    if (previewUrl) setTimeout(URL.revokeObjectURL.bind(URL, previewUrl), 2000);
-    previewUrl = url;
+    const tab = currentTab;
+    if (!PREVIEW_TABS.includes(tab)) return;
+    if (tab === 'invoice') {
+      const c = client(draft.clientId);
+      if (!c) return showPreview([], { empty: 'Add a client on the Clients tab to start an invoice.' });
+      return showPreview([{ url: buildPdf(draftOptions(c, draft)).output('bloburl'), title: 'Invoice preview' }], { zoom: true });
+    }
+    if (tab === 'clients') {
+      const c = client(editingClient);
+      if (!c) return showPreview([], { empty: 'Add a client to see how they appear on your invoices.' });
+      return showPreview([{ url: croppedUrl(buildPdf(draftOptions(c, sampleInvoice(c))), 0, 0.62), view: 'view=FitH', title: 'How this client appears on an invoice' }],
+        { caption: `How ${c.company || 'this client'} appears on an invoice${c.items && c.items.length ? ', with their default lines' : ' (example line)'}` });
+    }
+    if (tab === 'me') {
+      const c = sampleClient(), doc = buildPdf(draftOptions(c, sampleInvoice(c)));
+      return showPreview([
+        { url: croppedUrl(doc, 0, 0.4), view: 'view=FitH', title: 'Top of your invoices' },
+        { url: croppedUrl(doc, 0.58, 1), view: 'view=FitH', title: 'Bottom of your invoices' },
+      ], { caption: 'Your details, logo and design (top) and banking details and notes (bottom), on an example invoice' });
+    }
+    const h = invoices.find(x => x.id === histPick);
+    if (!h) return showPreview([], { empty: invoices.length ? 'Click an invoice or quote to see it here.' : 'Saved invoices and quotes appear here.' });
+    showPreview([{ url: buildPdf(pdfOptions(h)).output('bloburl'), title: `${h.inv.number} preview` }], { zoom: true });
   }, delay);
 }
 
@@ -757,12 +820,13 @@ $('#cl-private').onchange = e => {
   renderClientOptions(); $('#cl-select').value = c.id; renderInvoice(); renderHistory();
   toast(on ? `${c.company} is personal${team ? `, and no longer shared with ${team}` : ''}.` : `${c.company} is ${team ? `shared with ${team}` : 'no longer personal'}.`);
 };
-$('#cl-select').onchange = e => { editingClient = e.target.value; renderClients(); };
+$('#cl-select').onchange = e => { editingClient = e.target.value; renderClients(); refreshPreview(0); };
 $$('[data-cl]').forEach(el => el.oninput = () => {
   const c = client(editingClient); if (!c) return;
   c[el.dataset.cl] = el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value;
   persist('clients'); renderClientOptions(); $('#cl-select').value = c.id;
-  if (c.id === draft.clientId) { renderRates(); renderItems(); refreshPreview(); }
+  if (c.id === draft.clientId) { renderRates(); renderItems(); }
+  refreshPreview();
 });
 $('#cl-new').onclick = () => {
   const c = { id: uid(), company: 'New client', contacts: '', phone: '', address: '', currency: 'GBP', dueDays: 14,
@@ -1238,37 +1302,44 @@ function renderReports() {
   const table = (head, body) => `<table class="report"><thead><tr>${head.map((h, i) => `<th${i ? ' class="num"' : ''}>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
   const tr = cells => `<tr>${cells.map((c, i) => `<td${i ? ' class="num"' : ''}>${c}</td>`).join('')}</tr>`;
   const label = settings.taxLabel || 'VAT';
-  let html = '<h3>Totals</h3>' + table(['Currency', 'Invoices', 'Excl. ' + label, label, 'Total', 'Paid', 'Outstanding'], byCur.map(cur => {
-    const r = rows.filter(x => x.cur === cur);
-    return tr([cur, r.length, money(sum(r, x => x.subtotal), cur), money(sum(r, x => x.tax), cur), `<b>${money(sum(r, x => x.total), cur)}</b>`,
-      money(sum(r.filter(isPaid), x => x.total), cur), money(sum(r.filter(isOwed), x => x.total), cur)]);
-  }).join(''));
+  // The headline figures, per currency.
+  const tile = (l, v, sub) => `<div class="tile"><div class="tile-label">${l}</div><div class="tile-value">${v}</div><div class="tile-sub">${sub}</div></div>`;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  let html = byCur.map(cur => {
+    const r = rows.filter(x => x.cur === cur), paid = r.filter(isPaid), owed = r.filter(isOwed);
+    return `${byCur.length > 1 ? `<h3>${cur}</h3>` : ''}<div class="tiles rep-tiles">${[
+      tile('Invoiced', money(sum(r, x => x.total), cur), plural(r.length, 'invoice')),
+      tile('Paid', money(sum(paid, x => x.total), cur), `${paid.length} of ${r.length} paid`),
+      tile('Outstanding', money(sum(owed, x => x.total), cur), owed.length ? plural(owed.length, 'unpaid invoice') : 'Nothing owed'),
+      tile(esc(label), money(sum(r, x => x.tax), cur), `on ${money(sum(r, x => x.subtotal), cur)} excl. ${esc(label)}`),
+    ].join('')}</div>`;
+  }).join('');
   // What's been paid, all in rand, at each invoice's own rate.
   const home = (arr, f) => arr.some(r => !r.home) ? null : round2(arr.reduce((s, r) => s + f(r.home), 0));
   const homeMoney = v => v == null ? '<span class="muted" title="Waiting for an exchange rate">…</span>' : money(v, to);
   const showHome = to && foreign.length;
   if (showHome) {
     const paid = rows.filter(isPaid);
-    html += `<h3>Paid, in rand (${to})</h3>` + table(['', 'Invoices', 'Excl. ' + label, label, 'Total'],
+    html += `<div class="card"><h3>Paid, in rand (${to})</h3>` + table(['', 'Invoices', 'Excl. ' + label, label, 'Total'],
       tr(['All currencies', paid.length, homeMoney(home(paid, h => h.subtotal)), homeMoney(home(paid, h => h.tax)), `<b>${homeMoney(home(paid, h => h.total))}</b>`]))
-      + `<p class="muted">Invoices in other currencies get a rand value once they're marked paid, at ${esc(bankName)}'s buying rate on the day they were marked paid.</p>`;
+      + `<p class="muted">Invoices in other currencies get a rand value once they're marked paid, at ${esc(bankName)}'s buying rate on the day they were marked paid.</p></div>`;
   }
   const clientsIn = [...new Set(rows.map(r => `${r.h.c.company}\u0000${r.cur}`))];
-  html += '<h3>By client</h3>' + table(['Client', 'Invoices', 'Total', 'Paid', 'Outstanding', ...(showHome ? [`Paid in ${to}`] : [])], clientsIn.map(k => {
+  html += '<div class="rep-grid"><div class="card"><h3>By client</h3>' + table(['Client', 'Invoices', 'Total', 'Paid', 'Outstanding', ...(showHome ? [`Paid in ${to}`] : [])], clientsIn.map(k => {
     const [name, cur] = k.split('\u0000'); const r = rows.filter(x => x.h.c.company === name && x.cur === cur);
     return tr([esc(name), r.length, money(sum(r, x => x.total), cur), money(sum(r.filter(isPaid), x => x.total), cur),
       money(sum(r.filter(isOwed), x => x.total), cur), ...(showHome ? [homeMoney(home(r.filter(isPaid), h => h.total))] : [])]);
-  }).join(''));
+  }).join('')) + '</div>';
   const months = [...new Set(rows.map(r => r.h.inv.date.slice(0, 7)))].sort();
-  html += '<h3>By month</h3>' + table(['Month', ...byCur, ...(showHome ? [`Paid in ${to}`] : [])], months.map(m => {
+  html += '<div class="card"><h3>By month</h3>' + table(['Month', ...byCur, ...(showHome ? [`Paid in ${to}`] : [])], months.map(m => {
     const d = parseDate(m + '-01'), inM = rows.filter(x => x.h.inv.date.startsWith(m));
     return tr([`${MONTHS[d.getMonth()]} ${d.getFullYear()}`, ...byCur.map(cur => money(sum(inM.filter(x => x.cur === cur), x => x.total), cur)),
       ...(showHome ? [homeMoney(home(inM.filter(isPaid), h => h.total))] : [])]);
-  }).join(''));
+  }).join('')) + '</div></div>';
   // The rate behind each paid invoice in another currency; type a rate in to use your own.
   if (showHome) {
     const editable = r => canStoreFx(r.h) || !teamState.team;
-    html += `<h3>Exchange rates</h3><p class="muted">Rand per unit of each invoice's currency: ${esc(bankName)}'s buying rate (what the bank pays you) on the day each invoice was marked paid, unless you type in your own. Unpaid invoices get theirs once they're marked paid.</p>`
+    html += `<div class="card"><h3>Exchange rates</h3><p class="muted">Rand per unit of each invoice's currency: ${esc(bankName)}'s buying rate (what the bank pays you) on the day each invoice was marked paid, unless you type in your own. Unpaid invoices get theirs once they're marked paid.</p>`
       + `<table class="report fx"><thead><tr><th>Invoice</th><th>Paid</th><th>Client</th><th class="num">Total</th><th class="num">Rate</th><th>From</th><th class="num">In ${to}</th></tr></thead><tbody>`
       + foreign.sort((a, b) => (a.h.paidAt || '9999').localeCompare(b.h.paidAt || '9999') || a.h.inv.date.localeCompare(b.h.inv.date)).map(r => isPaid(r) ? `<tr>
         <td>${esc(r.h.inv.number)}</td><td>${esc(r.h.paidAt)}</td><td>${esc(r.h.c.company)}</td>
@@ -1278,7 +1349,7 @@ function renderReports() {
         <td class="num">${homeMoney(r.home && r.home.total)}</td></tr>` : `<tr class="unpaid">
         <td>${esc(r.h.inv.number)}</td><td class="muted">–</td><td>${esc(r.h.c.company)}</td>
         <td class="num">${money(r.total, r.cur)}</td><td class="num muted">–</td><td class="muted" colspan="2">Not paid yet: shown once it's marked paid</td></tr>`).join('')
-      + '</tbody></table>';
+      + '</tbody></table></div>';
   }
   $('#rep-body').innerHTML = html;
 }
@@ -1427,45 +1498,67 @@ $('#overdue-bars').onclick = e => {
   else if (e.target.dataset.goHist) go('history');
 };
 
+// History: one row per invoice or quote. Clicking a row previews it on the right and shows what you
+// can do with it in the bar above the list.
 function renderHistory() {
   $('#hist-empty').style.display = invoices.length ? 'none' : '';
-  const driveCell = h => h.backup
-    ? `<button class="link ok" data-act="drive" data-id="${h.id}" title="Backed up to ${esc(h.backup)}. Click to show it.">✓ Backed up</button>`
+  if (histPick && !invoices.some(h => h.id === histPick)) histPick = null;
+  const make = can('createInvoices'); // an accountant only opens and saves the PDFs
+  const backupCell = h => h.backup
+    ? `<button class="link ok" data-act="drive" data-id="${h.id}" title="Backed up to ${esc(h.backup)}. Click to show it.">✓</button>`
     : h.backupError !== undefined
-      ? `<button class="link warn" data-act="backup" data-id="${h.id}" title="${esc(h.backupError)}. Click to retry.">⚠ Retry</button>`
-      : '<span class="muted">–</span>';
+      ? `<button class="link warn" data-act="backup" data-id="${h.id}" title="Not backed up: ${esc(h.backupError)}. Click to retry.">⚠ Retry</button>`
+      : '<span class="muted" title="Not backed up">–</span>';
   const statusCell = h => {
-    const s = payStatus(h);
+    const st = payStatus(h);
     const btn = docType(h) === 'quote'
       ? `<button class="link" data-act="steps" data-id="${h.id}" title="Tick off each line of this quote as it's paid">${openSteps.has(h.id) ? 'Hide payments' : 'Payments'}</button>`
-        + (make ? `<button class="link" data-act="convert" data-id="${h.id}" title="Start an invoice from this quote">Make invoice</button>` : '')
       : !can('markPaid') ? ''
         : h.paidAt ? `<button class="link" data-act="unpaid" data-id="${h.id}">Undo</button>`
           : `<button class="link" data-act="paid" data-id="${h.id}">Mark paid</button>`;
-    return `<span class="status ${s.key}">${esc(s.label)}</span> ${btn}`;
+    return `<span class="status ${st.key}">${esc(st.label)}</span> ${btn}`;
   };
-  // An accountant only opens and saves the PDFs; making, copying and removing is for the others.
-  const make = can('createInvoices');
   $('#hist-empty').textContent = teamState.team && !can('seeAllInvoices') ? "You haven't saved any invoices yet. As a team member, you see only the invoices and quotes you make." : 'No invoices saved yet.';
   $('#hist').innerHTML = invoices.map(h =>
-    `<tr><td>${esc(h.inv.number)}${h.savedBy ? `<div class="muted" title="Saved by ${esc(h.savedBy)}">by ${esc(h.savedBy.split('@')[0])}</div>` : ''}${h.private ? '<div class="muted" title="Personal: not shared with a team">🔒 Personal</div>' : ''}</td><td>${esc(h.c.company)}</td><td>${esc(h.inv.date)}</td>
+    `<tr data-pick="${h.id}" tabindex="0" class="${h.id === histPick ? 'on' : ''}"><td>${esc(h.inv.number)}${h.savedBy ? `<div class="muted" title="Saved by ${esc(h.savedBy)}">by ${esc(h.savedBy.split('@')[0])}</div>` : ''}${h.private ? '<div class="muted" title="Personal: not shared with a team">🔒 Personal</div>' : ''}</td>
+     <td>${esc(h.c.company)}</td><td>${esc(h.inv.date)}</td>
      <td class="num">${esc(money(h.total, h.c.currency))}</td>
-     <td>${statusCell(h)}</td>
-     <td>${driveCell(h)}</td>
-     <td class="num">${h.file && window.api ? `<button class="btn" data-act="open" data-id="${h.id}">Open</button>` : ''}
-     ${h.file || !window.api ? (make ? `<button class="btn" data-act="pdf" data-id="${h.id}" title="Save this again (e.g. after editing your details)">Re-save</button>` : '')
-       : `<button class="btn" data-act="pdf" data-id="${h.id}" title="Saved on another computer. Make the PDF on this one too.">Save PDF here</button>`}
-     ${make ? `<button class="btn" data-act="edit" data-id="${h.id}" title="Change this ${docType(h) === 'quote' ? 'quote' : 'invoice'} and save it again under the same number">Edit</button>
-     <button class="btn" data-act="copy" data-id="${h.id}" title="Start a new invoice with these lines">Copy</button>
-     <button class="btn" data-act="private" data-id="${h.id}" title="${h.private ? 'Share this with your team' : 'Keep this off your team'}">${h.private ? 'Share' : 'Make personal'}</button>
-     <button class="x" data-act="del" data-id="${h.id}" title="Remove from history">×</button>` : ''}</td></tr>`
+     <td>${statusCell(h)}</td><td class="num">${backupCell(h)}</td></tr>`
      + (docType(h) === 'quote' && openSteps.has(h.id) ? stepsRow(h) : '')).join('');
+  // What you can do with the one you picked.
+  const h = invoices.find(x => x.id === histPick), bar = $('#hist-sel');
+  bar.hidden = !h;
+  if (!h) return;
+  const what = docType(h) === 'quote' ? 'quote' : 'invoice', desk = !!window.api;
+  bar.innerHTML = `<div class="hist-sel-what"><b>${esc(h.inv.number)}</b> · ${esc(h.c.company)} · ${esc(money(h.total, h.c.currency))}
+      <span class="muted">${h.file ? esc(h.file.split(/[\\/]/).pop()) : desk ? 'Saved on another computer' : ''}</span></div>
+    <div class="hist-sel-acts">
+    ${h.file && desk ? `<button class="btn" data-act="open" data-id="${h.id}">Open</button><button class="btn" data-act="folder" data-id="${h.id}" title="Show the PDF in its folder">Show in folder</button>` : ''}
+    ${h.file || !desk ? (make ? `<button class="btn" data-act="pdf" data-id="${h.id}" title="Save this again (e.g. after editing your details)">Re-save</button>` : '')
+      : `<button class="btn" data-act="pdf" data-id="${h.id}" title="Saved on another computer. Make the PDF on this one too.">Save PDF here</button>`}
+    ${make ? `<button class="btn" data-act="edit" data-id="${h.id}" title="Change this ${what} and save it again under the same number">Edit</button>
+      <button class="btn" data-act="copy" data-id="${h.id}" title="Start a new invoice with these lines">Copy</button>
+      ${what === 'quote' ? `<button class="btn" data-act="convert" data-id="${h.id}" title="Start an invoice from this quote">Make invoice</button>` : ''}
+      <button class="btn" data-act="private" data-id="${h.id}" title="${h.private ? 'Share this with your team' : 'Keep this off your team'}">${h.private ? 'Share' : 'Make personal'}</button>
+      <button class="btn danger" data-act="del" data-id="${h.id}" title="Remove from history">Remove</button>` : ''}
+    </div>`;
+}
+function pickHistory(id) {
+  histPick = histPick === id ? null : id;
+  renderHistory(); refreshPreview(0);
 }
 $('#hist').onchange = e => { if (e.target.dataset.step != null) setStepPaid(e.target.dataset.id, Number(e.target.dataset.step), e.target.checked); };
-$('#hist').onclick = async e => {
+$('#hist').onkeydown = e => { const tr = e.target.closest('tr[data-pick]'); if (tr && (e.key === 'Enter' || e.key === ' ') && e.target === tr) { e.preventDefault(); pickHistory(tr.dataset.pick); } };
+$('#hist-sel').onclick = e => histAction(e);
+$('#hist').onclick = e => {
+  if (!e.target.closest('button, input, label')) { const tr = e.target.closest('tr[data-pick]'); if (tr) return pickHistory(tr.dataset.pick); }
+  histAction(e);
+};
+async function histAction(e) {
   const { act, id } = e.target.dataset;
   const h = invoices.find(x => x.id === id); if (!h) return;
-  if (act === 'pdf') { if (await savePdf(h)) { persist('invoices'); renderHistory(); } }
+  if (act === 'folder') store.showInFolder(h.file);
+  else if (act === 'pdf') { if (await savePdf(h)) { persist('invoices'); renderHistory(); } }
   else if (act === 'open') { const r = await store.open(h.file); if (r) toast(`Can't open it: ${r}`); }
   else if (act === 'drive') /^https:\/\//.test(h.backup) ? store.openExternal(h.backup) : store.showInFolder(h.backup);
   else if (act === 'backup') {
@@ -1508,11 +1601,11 @@ $('#hist').onclick = async e => {
     draft.hideRates = !!h.inv.hideRates;
     renderInvoice(); changed(); go('invoice');
   } else if (act === 'del' && confirm(`Remove ${h.inv.number} from history${teamState.team && !h.private ? ` for everyone in ${teamState.team.name}` : ''}? (PDF files are not deleted.)`)) {
-    invoices = invoices.filter(x => x.id !== id); persist('invoices'); renderHistory();
+    invoices = invoices.filter(x => x.id !== id); persist('invoices'); renderHistory(); refreshPreview(0);
     const back = settleStock(h.inv.number, []);
     if (back) toast(`${h.inv.number} removed. Its stock (${back}) is back on hand.`);
   }
-};
+}
 
 // ---------- misc ----------
 // Sets a field's value, unless it's the one being typed in (a team change mustn't move the cursor).
@@ -1524,6 +1617,9 @@ function toast(msg, actLabel, act) {
   t.classList.add('on'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('on'), act ? 6000 : 2500);
 }
 function go(tab) {
+  currentTab = tab;
+  $('main').classList.toggle('full', !PREVIEW_TABS.includes(tab));
+  refreshPreview(0);
   $$('section[data-tab]').forEach(s => s.classList.toggle('show', s.dataset.tab === tab));
   $$('nav button').forEach(b => b.classList.toggle('active', b.dataset.go === tab));
   if (tab === 'clients') renderClients();
@@ -1531,6 +1627,7 @@ function go(tab) {
   if (tab === 'reports') renderReports();
   if (tab === 'history') renderHistory();
   if (tab === 'stock') renderStock();
+  if (tab === 'dashboard') renderDashboard();
   if (tab === 'me' && store.teamRefresh && teamState.signedIn) store.teamRefresh().then(r => r && !r.error && renderTeam(r)); // new invitations
 }
 const tabShown = tab => $(`section[data-tab="${tab}"]`).classList.contains('show');
@@ -1733,7 +1830,7 @@ function mergeRemote({ kinds, data }) {
   settings.nextNumber = nextNumberValue('invoice'); settings.nextQuoteNumber = Math.max(num(settings.nextQuoteNumber), nextNumberValue('quote'));
   if (kinds.includes('clients')) { renderClients(); renderInvoice(); }
   if (kinds.includes('settings')) { renderMe(); renderDesign(); renderBank(); renderInvoice(); }
-  if (kinds.includes('invoices')) { renderHistory(); renderOverdue(); if (tabShown('reports')) renderReports(); }
+  if (kinds.includes('invoices')) { renderHistory(); renderOverdue(); if (tabShown('reports')) renderReports(); if (tabShown('dashboard')) renderDashboard(); }
   if (kinds.includes('stock') || kinds.includes('stockmoves')) { liveStockRows.forEach(r => r.update()); if (tabShown('stock')) renderStock(); }
   if (tabShown('notifications')) renderNotifications();
   refreshPreview();
@@ -1755,7 +1852,7 @@ function applyRights() {
   const key = JSON.stringify(teamState.team && teamState.team.can || null);
   if (key === rightsKey) return;
   rightsKey = key;
-  const tabs = { invoice: can('createInvoices'), notifications: can('createInvoices'), reports: can('reports') };
+  const tabs = { invoice: can('createInvoices'), notifications: can('createInvoices'), reports: can('reports'), dashboard: can('reports') };
   for (const [tab, on] of Object.entries(tabs)) $(`nav [data-go="${tab}"]`).hidden = !on;
   const now = $$('section[data-tab]').find(s => s.classList.contains('show'));
   if (now && tabs[now.dataset.tab] === false) go(can('createInvoices') ? 'invoice' : 'history');

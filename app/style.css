@@ -346,6 +346,7 @@ table.hist tbody tr:focus-visible { outline:2px solid var(--brand); outline-offs
 .ask-bubble ul, .ask-bubble ol { margin:6px 0 2px; padding-left:18px; }
 .ask-bubble p { margin:0 0 6px; }
 .ask-bubble .status { font-size:11px; padding:0 6px; }
+.ask-bubble .ask-src { margin:6px 0 0; font-size:11px; opacity:.7; }
 .ask-acts { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
 .ask-acts .btn { padding:4px 10px; font-size:12px; border-radius:14px; }
 .ask-form { display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--border); }

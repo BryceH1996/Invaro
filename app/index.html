@@ -472,6 +472,23 @@
           <div id="share-list" class="share-list"></div>
         </div>
       </div>
+      <div id="gemini-box" hidden>
+        <h3>Ask Invaro with Gemini <button type="button" class="info" aria-label="About Gemini" aria-expanded="false">i</button><span class="tip" hidden>Optional. Ask Invaro answers what it can on this computer. With your own Gemini key, anything else goes to Google's Gemini with a summary of your clients, invoices, stock and figures, so it can answer many more questions. The key stays on this computer and isn't synced or shared with your team.</span></h3>
+        <p class="drive-status" id="gemini-status"></p>
+        <div id="gemini-on" class="actions">
+          <button class="btn" id="gemini-change" type="button">Change key</button>
+          <button class="btn" id="gemini-disconnect" type="button">Turn off</button>
+        </div>
+        <div id="gemini-form">
+          <p class="muted">Get a free key from Google AI Studio and paste it here. <b>On Google's free tier, Google may use what's sent (including client names and amounts) to improve its products, and people may read it.</b> A key from a Google project with billing turned on keeps it private.</p>
+          <label for="gemini-key">Gemini API key</label><input id="gemini-key" type="password" placeholder="AIza…" spellcheck="false" autocomplete="off">
+          <div class="actions">
+            <button class="btn primary" id="gemini-connect" type="button">Turn on</button>
+            <button class="btn" id="gemini-get" type="button">Get a free key…</button>
+            <button class="btn" id="gemini-cancel" type="button" hidden>Cancel</button>
+          </div>
+        </div>
+      </div>
       <h3>Updates <button type="button" class="info" aria-label="About updates" aria-expanded="false">i</button><span class="tip" hidden>Invaro checks GitHub (<span id="upd-repo"></span>) every 30 minutes and shows a bar at the top when an update is ready. Each download is checked against GitHub's checksum before it's installed.</span></h3>
       <p class="drive-status" id="upd-status">Checking…</p>
       <div class="actions">
@@ -554,7 +571,7 @@
 </dialog>
 <input type="file" id="imx-file" accept=".csv,.xlsx,.txt,.tsv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
 <aside class="ask" id="ask" hidden aria-label="Ask Invaro">
-  <div class="ask-head"><b>Ask Invaro</b><span class="muted">Runs on this computer. Nothing is sent anywhere.</span><button class="x" id="ask-close" title="Close (Esc)">×</button></div>
+  <div class="ask-head"><b>Ask Invaro</b><span class="muted" id="ask-note">Runs on this computer. Nothing is sent anywhere.</span><button class="x" id="ask-close" title="Close (Esc)">×</button></div>
   <div class="ask-log" id="ask-log" aria-live="polite"></div>
   <form class="ask-form" id="ask-form"><input id="ask-q" placeholder="e.g. Who owes me money?" autocomplete="off"><button class="btn primary" type="submit">Ask</button></form>
 </aside>

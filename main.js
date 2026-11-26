@@ -692,6 +692,14 @@ ipcMain.handle('woo:disconnect', () => woo().disconnect());
 ipcMain.handle('woo:products', safe(() => woo().products()));
 ipcMain.handle('woo:image', safe((_e, url) => woo().image(url)));
 
+// ---------- Ask Invaro with Gemini (gemini.js): optional, with the user's own key ----------
+let geminiApi = null;
+const gemini = () => geminiApi || (geminiApi = require('./gemini').createGemini());
+ipcMain.handle('gemini:status', () => gemini().status());
+ipcMain.handle('gemini:connect', safe((_e, key) => gemini().connect(key)));
+ipcMain.handle('gemini:disconnect', () => gemini().disconnect());
+ipcMain.handle('gemini:ask', safe((_e, question, context, history) => gemini().ask(question, context, history)));
+
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('shell:open', (_e, p) => isPdfFile(p) ? shell.openPath(path.resolve(p)) : 'Invaro only opens PDF files on this computer.');
 ipcMain.handle('shell:show', (_e, p) => { if (isPdfFile(p)) shell.showItemInFolder(path.resolve(p)); });

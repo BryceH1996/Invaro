@@ -3,6 +3,8 @@
 // everyday synonyms), picks out any client, stock item or time period you name, and answers from your
 // own data (the same figures as the Dashboard) or from the help below, with buttons that take you there.
 // It only knows what's written here, so a question it can't place gets suggestions instead of a guess.
+// From 1.30.0, if you add your own Gemini key on My details, those questions go to Google's Gemini
+// instead, with a summary of your figures (geminiContext below); see gemini.js.
 
 // ---------- understanding a question ----------
 const SYNONYMS = {
@@ -257,6 +259,106 @@ function answer(text) {
   return null;
 }
 
+// ---------- Gemini (optional, with your own key) ----------
+let geminiState = null;
+const geminiOn = () => !!(geminiState && geminiState.connected);
+const plain = html => { const d = document.createElement('div'); d.innerHTML = html; d.querySelectorAll('li').forEach(li => li.prepend('- ')); d.querySelectorAll('li, p, br').forEach(el => el.append('\n')); return d.textContent.replace(/\n{3,}/g, '\n\n').trim(); };
+const askHistory = []; // what's been said, as plain text, for follow-up questions
+// What Gemini is told about your business: figures only for those allowed to see them (as in the rest of Ask).
+function geminiContext() {
+  const L = [], figs = figuresAllowed(), me = settings.me || {};
+  L.push(`Today: ${todayIso()}. Business: ${me.company || me.name || '(not set)'}. Your currency: ${homeCur() || '(not set)'}. Tax is called ${settings.taxLabel || 'VAT'}.`);
+  L.push(`Next invoice number: ${nextInvoiceNumber('invoice')}; next quote number: ${nextInvoiceNumber('quote')}.`);
+  if (!figs) L.push('This person is a team member without access to money figures: do not discuss amounts, totals, who owes what or sales. Help them use the app instead.');
+  L.push('', '## Clients (name | currency | payment terms in days | daily rate | hourly rate | tax rate %)');
+  for (const c of clients.slice(0, 300)) L.push(`${c.company || 'Client'} | ${curCode(c.currency)} | ${c.dueDays ?? ''} | ${figs ? num(c.dailyRate) || '' : ''} | ${figs ? num(c.hourlyRate) || '' : ''} | ${c.taxRate ?? ''}`);
+  if (figs) {
+    for (const cur of curList()) {
+      const f = moneyFacts(cur); if (!f.list.length) continue;
+      L.push('', `## Summary in ${cur}`,
+        `Owed: ${money(f.owed.total, cur)} on ${f.owed.count} invoices; overdue: ${money(f.overdue.total, cur)} on ${f.overdue.count}.`,
+        `Invoiced this year: ${money(f.invoiced.year, cur)}; paid this year: ${money(f.paid.year, cur)}; last 12 months: ${money(f.invoiced.last12, cur)}.`,
+        'Month | invoiced (by invoice date) | paid (by date marked paid)', ...f.series.map(m => `${m.m} | ${money(m.invoiced, cur)} | ${money(m.paid, cur)}`));
+    }
+    const home = homeCur();
+    if (home && curList().some(c => c !== home)) {
+      const all = moneyFacts('all');
+      if (!all.missing) L.push('', `## Everything in ${home} at today's rates`, `Owed: ${money(all.owed.total, home)}; invoiced this year: ${money(all.invoiced.year, home)}; paid this year: ${money(all.paid.year, home)}.`);
+    }
+    const list = realInvoices();
+    L.push('', `## Invoices, newest first (${Math.min(list.length, 400)} of ${list.length}; number | date | client | total incl. tax | tax | due | status)`);
+    for (const h of list.slice(0, 400)) L.push(`${h.inv.number} | ${h.inv.date || ''} | ${h.c.company || ''} | ${money(h.total, h.c.currency)} | ${money(h.tax || 0, h.c.currency)} | ${h.inv.due || ''} | ${payStatus(h).key === 'untracked' ? 'paid status not set' : payStatus(h).label}`);
+    const q = openQuotes();
+    if (q.length) { L.push('', '## Open quotes (number | date | client | total | valid until)'); for (const h of q.slice(0, 100)) L.push(`${h.inv.number} | ${h.inv.date || ''} | ${h.c.company || ''} | ${money(h.total, h.c.currency)} | ${h.inv.due || ''}`); }
+    const since = monthsBack(12)[0] + '-01';
+    for (const cur of curList()) { const b = bestSellers(cur, since); if (b.length) L.push('', `## Best-selling stock, last 12 months (${cur})`, ...b.slice(0, 15).map(x => `${x.name}: ${qtyText(x.qty, x)} sold, ${money(x.sales, cur)}`)); }
+  }
+  const items = liveItems();
+  if (items.length) {
+    L.push('', `## Stock (${Math.min(items.length, 400)} of ${items.length}; name | code | category | on hand | low at | prices)`);
+    for (const st of items.slice(0, 400)) L.push(`${st.name} | ${st.sku || ''} | ${st.category || ''} | ${qtyText(onHand(st.id), st)} | ${hasLowLevel(st) ?qtyText(num(st.lowAt), st) : ''} | ${figs ? Object.entries(st.prices || {}).filter(([, v]) => v !== '' && v != null).map(([k, v]) => money(v, k)).join(', ') : ''}`);
+  }
+  L.push('', '## How to use Invaro (help text)');
+  for (const h of HELP) L.push(`${h.t}: ${plain(h.a)}`);
+  return L.join('\n');
+}
+// Gemini's reply as safe HTML: everything escaped, then **bold** and "- " lists.
+function replyHtml(text) {
+  const out = []; let list = null;
+  for (const raw of esc(text).split('\n')) {
+    const line = raw.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    const m = line.match(/^\s*[-*•]\s+(.*)$/);
+    if (m) { (list ||= []).push(`<li>${m[1]}</li>`); continue; }
+    if (list) { out.push(`<ul>${list.join('')}</ul>`); list = null; }
+    if (line.trim()) out.push(`<p>${line}</p>`);
+  }
+  if (list) out.push(`<ul>${list.join('')}</ul>`);
+  return out.join('');
+}
+const geminiSettings = () => goBtn('Gemini settings', 'me', () => $('#gemini-box').scrollIntoView({ block: 'center' }));
+let geminiBusy = false;
+async function askGemini(text) {
+  if (geminiBusy) return;
+  geminiBusy = true;
+  const el = askSay('bot', '<span class="muted">Asking Gemini…</span>');
+  let r;
+  try { r = await store.geminiAsk(text, geminiContext(), askHistory.slice(0, -1)); } catch (e) { r = { error: e.message }; }
+  geminiBusy = false;
+  el.remove();
+  if (!r || r.error) return askSay('bot', esc((r && r.error) || 'Gemini didn\'t answer.'), [geminiSettings()]);
+  askHistory.push({ who: 'bot', text: r.text });
+  askSay('bot', replyHtml(r.text) + '<p class="ask-src">Answered by Google Gemini. Check figures before relying on them.</p>');
+}
+async function renderGemini() {
+  if (!store.geminiStatus) { $('#gemini-box').hidden = true; return; }
+  $('#gemini-box').hidden = false;
+  if (!geminiState) geminiState = await store.geminiStatus();
+  const on = geminiOn() && !$('#gemini-form').dataset.editing;
+  $('#gemini-status').className = 'drive-status' + (geminiOn() ? ' on' : '');
+  $('#gemini-status').textContent = geminiOn() ? `On, with the key ending …${geminiState.keyEnd}. Questions Ask Invaro can't answer itself go to Gemini.` : 'Off. Ask Invaro answers everything on this computer.';
+  $('#gemini-form').hidden = on;
+  $('#gemini-on').hidden = !on;
+  $('#gemini-cancel').hidden = !geminiOn();
+  $('#ask-note').textContent = geminiOn() ? 'Questions it can\'t answer go to Google Gemini.' : 'Runs on this computer. Nothing is sent anywhere.';
+}
+$('#gemini-get').onclick = () => store.openExternal && store.openExternal('https://aistudio.google.com/apikey');
+$('#gemini-connect').onclick = async () => {
+  const b = $('#gemini-connect'); b.disabled = true; b.textContent = 'Checking…';
+  const r = await store.geminiConnect($('#gemini-key').value);
+  b.disabled = false; b.textContent = 'Turn on';
+  if (r && r.error) return toast(r.error);
+  geminiState = r; $('#gemini-key').value = ''; delete $('#gemini-form').dataset.editing;
+  renderGemini();
+  toast('Gemini is on. Questions Ask Invaro can\'t answer itself now go to Gemini.');
+};
+$('#gemini-change').onclick = () => { $('#gemini-form').dataset.editing = '1'; renderGemini(); $('#gemini-key').focus(); };
+$('#gemini-cancel').onclick = () => { delete $('#gemini-form').dataset.editing; renderGemini(); };
+$('#gemini-disconnect').onclick = async () => {
+  if (!confirm('Turn off Gemini? The key is removed from this computer and Ask Invaro goes back to answering everything here.')) return;
+  geminiState = await store.geminiDisconnect(); renderGemini();
+};
+renderGemini();
+
 // ---------- the panel ----------
 const SUGGEST = ['Who owes me money?', 'How is this month going?', 'What\'s low on stock?', 'How do I make a quote?', 'Import stock from WooCommerce', 'How much did I invoice last month?'];
 function askSay(who, html, actions = []) {
@@ -269,18 +371,27 @@ function askSay(who, html, actions = []) {
   }
   $('#ask-log').append(el);
   $('#ask-log').scrollTop = $('#ask-log').scrollHeight;
+  return el;
 }
 function ask(text) {
-  text = String(text || '').trim(); if (!text) return;
+  text = String(text || '').trim(); if (!text || geminiBusy) return;
   askSay('me', esc(text));
+  askHistory.push({ who: 'me', text });
   let r = null;
   try { r = answer(text); } catch (e) { r = A(`Sorry, something went wrong working that out (${esc(e.message)}).`); }
-  if (!r) r = A(`I'm not sure about that one. I know about your invoices, clients, stock and how to use Invaro. Try one of these:`, SUGGEST.slice(0, 4).map(s => ({ label: s, run: () => ask(s) })));
-  askSay('bot', r.html, r.actions);
+  if (!r && geminiOn()) return askGemini(text);
+  if (!r) r = A(`I'm not sure about that one. I know about your invoices, clients, stock and how to use Invaro. Try one of these:`, [
+    ...SUGGEST.slice(0, 4).map(s => ({ label: s, run: () => ask(s) })),
+    ...(store.geminiStatus ? [{ ...geminiSettings(), label: 'Answer more with Gemini…' }] : []),
+  ]);
+  askHistory.push({ who: 'bot', text: plain(r.html) });
+  // A local answer can still go to Gemini, for when it took the question the wrong way.
+  const actions = geminiOn() ? [...r.actions, { label: 'Ask Gemini instead', run: () => { askHistory.push({ who: 'me', text }); askGemini(text); } }] : r.actions;
+  askSay('bot', r.html, actions);
 }
 function openAsk() {
   $('#ask').hidden = false; $('#ask-btn').classList.add('on');
-  if (!$('#ask-log').children.length) askSay('bot', 'Hi! Ask me about your invoices, clients and stock, or how to do something in Invaro. Everything stays on this computer.', SUGGEST.map(s => ({ label: s, run: () => ask(s) })));
+  if (!$('#ask-log').children.length) askSay('bot', `Hi! Ask me about your invoices, clients and stock, or how to do something in Invaro. ${geminiOn() ? 'I answer what I can on this computer and pass anything else to Google Gemini.' : 'Everything stays on this computer.'}`, SUGGEST.map(s => ({ label: s, run: () => ask(s) })));
   $('#ask-q').focus();
 }
 const closeAsk = () => { $('#ask').hidden = true; $('#ask-btn').classList.remove('on'); };

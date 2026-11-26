@@ -66,7 +66,8 @@ function createGemini() {
   // Checks the key with a tiny request before keeping it.
   async function connect(key) {
     key = String(key || '').trim();
-    if (!/^[A-Za-z0-9_\-]{20,200}$/.test(key)) throw new Error('Paste the API key from Google AI Studio (it usually starts with "AIza").');
+    // Older keys look like "AIza…"; newer ones from AI Studio like "AQ.Ab8…" (with a dot).
+    if (!/^[A-Za-z0-9_.\-]{20,200}$/.test(key)) throw new Error('Paste the API key from Google AI Studio (it starts with "AQ." or "AIza").');
     let r = null;
     for (const model of MODELS) {
       r = await call(key, model, { contents: [{ role: 'user', parts: [{ text: 'Reply with OK.' }] }], generationConfig: { maxOutputTokens: 5 } });

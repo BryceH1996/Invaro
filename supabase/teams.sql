@@ -154,7 +154,7 @@ begin
   if r = 'accountant' then
     if tg_op = 'INSERT' then return null; end if;                -- adds nothing
     if new.kind = 'invoice' and not old.deleted and old.data is not null then
-      new.data := public.keep_keys(old.data, new.data, array['paidAt', 'paidSteps']); -- only the paid dates
+      new.data := public.keep_keys(old.data, new.data, array['paidAt', 'paidSteps', 'payments']); -- only what's been paid (part payments from 1.31.0)
     else
       new.data := old.data;
     end if;
@@ -174,7 +174,7 @@ begin
         new.data := public.keep_keys(new.data, old.data, billing);
       end if;
     elsif new.kind = 'invoice' and tg_op = 'UPDATE' and not new.deleted and not reserved and not old.deleted then
-      new.data := public.keep_keys(new.data, old.data, array['paidAt', 'paidSteps']); -- can't mark paid
+      new.data := public.keep_keys(new.data, old.data, array['paidAt', 'paidSteps', 'payments']); -- can't mark paid
     elsif new.kind = 'stock' then                                 -- stock items are for admins
       if tg_op = 'INSERT' then return null; end if;
       new.data := old.data;

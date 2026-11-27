@@ -22,7 +22,9 @@ function dashCurrencies() {
   const list = Object.keys(n).sort((a, b) => n[b] - n[a]);
   return list.length ? list : [usualCurrency()];
 }
-const isOwedStatus = h => ['unpaid', 'overdue'].includes(payStatus(h).key);
+// Owed: unpaid, overdue or part paid (a quote's "part" is its paid steps, not money owed).
+const isOwedStatus = h => docType(h) === 'invoice' && ['unpaid', 'overdue', 'part'].includes(payStatus(h).key);
+const creditNotes = () => invoices.filter(h => docType(h) === 'credit');
 
 // ---------- your currency, and today's rates ----------
 const homeCur = () => CURRENCIES[settings.homeCurrency] ? settings.homeCurrency : '';
@@ -49,12 +51,12 @@ function toHome(amount, from) {
   if (!a || !b) { loadTodayRates(); return null; }
   return round2(num(amount) * a / b);
 }
-// What an invoice is worth in your currency: the rate on the day it was paid if Invaro has it (rand
-// only, since banks quote in rand), otherwise today's.
+// What an invoice is worth in your currency: once it's paid, the rates on the days it was paid if Invaro
+// has them (their average over its payments; rand only, since banks quote in rand), otherwise today's.
 function homeValue(h) {
   const home = homeCur(), from = invCur(h), t = num(h.total);
   if (!home || from === home) return t;
-  if (h.paidAt && home === 'ZAR') { const f = fxOf(h, 'ZAR'); if (f && f.rate > 0) return round2(t * f.rate); }
+  if (h.paidAt && home === 'ZAR') { const r = paidRate(h, 'ZAR'); if (r > 0) return round2(t * r); }
   return toHome(t, from);
 }
 const wholeMoney = (v, c) => (v < 0 ? '-' : '') + curSymbol(c) + Math.round(Math.abs(v));
@@ -84,43 +86,65 @@ function homeRatesArrived() {
 // in yours.
 function moneyFacts(view, today = todayIso()) {
   const all = view === 'all', cur = all ? homeCur() : view;
-  const list = all ? realInvoices() : realInvoices().filter(h => invCur(h) === view);
+  const mineCur = h => all || invCur(h) === view;
+  const list = realInvoices().filter(mineCur);
+  // Invoiced is net of credit notes (each counts, negative, on its own date); paid is the payments made
+  // in the period, part payments included.
+  const docs = [...list, ...creditNotes().filter(mineCur)];
+  const sign = h => docType(h) === 'credit' ? -1 : 1;
   const val = all ? homeValue : h => num(h.total);
   let missing = 0;
-  const v = h => { const x = val(h); if (x == null) { missing++; return 0; } return x; };
+  const v = h => { const x = val(h); if (x == null) { missing++; return 0; } return sign(h) * x; };
+  // Part of an invoice (a payment, or what's still owed) in the view's currency: in yours, at the same
+  // rate as the invoice as a whole (the day it was paid, or today's).
+  const vPart = (h, amount) => {
+    if (!all) return num(amount);
+    const t = num(h.total), x = val(h);
+    if (x == null) { missing++; return 0; }
+    return t ? round2(x * num(amount) / t) : 0;
+  };
+  const pays = list.flatMap(h => paidWith(h).map(({ p, i }) => ({ h, i, on: p.on, amount: num(p.amount) })));
+  // A payment in yours: in rand, at the rate on the day it was made when Invaro has it (the rand can move
+  // between part payments); otherwise like the rest of the invoice.
+  const payV = x => {
+    if (all && cur === 'ZAR' && invCur(x.h) !== 'ZAR') { const f = payFxOf(x.h, x.i, 'ZAR'); if (f && Number(f.rate) > 0) return round2(x.amount * f.rate); }
+    return vPart(x.h, x.amount);
+  };
+  const paidBetween = (a, b) => round2(pays.filter(p => p.on >= a && p.on <= b).reduce((s, p) => s + payV(p), 0));
   const thisM = monthKey(today), lastM = shiftMonth(thisM, -1), lastY = shiftMonth(thisM, -12);
-  const invoicedIn = m => sumBy(list.filter(h => monthKey(h.inv.date) === m), v);
-  const paidIn = m => sumBy(list.filter(h => h.paidAt && monthKey(h.paidAt) === m), v);
+  const invoicedIn = m => sumBy(docs.filter(h => monthKey(h.inv.date) === m), v);
+  const paidIn = m => paidBetween(m + '-01', m + '-31');
   const owed = list.filter(isOwedStatus), overdue = list.filter(h => payStatus(h).key === 'overdue');
+  const owedV = h => vPart(h, owedOn(h));
   const months = monthsBack(12, today);
   const year = today.slice(0, 4), yearStart = year + '-01-01';
-  const inYear = list.filter(h => h.inv.date >= yearStart && h.inv.date <= today);
-  const paidInYear = list.filter(h => h.paidAt && h.paidAt >= yearStart && h.paidAt <= today);
+  const inYear = docs.filter(h => h.inv.date >= yearStart && h.inv.date <= today);
   const byClient = {};
-  for (const h of list.filter(x => monthKey(x.inv.date) >= months[0])) {
+  for (const h of docs.filter(x => monthKey(x.inv.date) >= months[0])) {
     const k = h.c.company || 'Client';
     byClient[k] ||= { name: k, id: h.c.id, total: 0, count: 0 };
-    byClient[k].total = round2(byClient[k].total + v(h)); byClient[k].count++;
+    byClient[k].total = round2(byClient[k].total + v(h)); if (sign(h) > 0) byClient[k].count++;
   }
   const debtors = {};
   for (const h of owed) {
     const k = `${h.c.company || 'Client'}\u0000${invCur(h)}`;
     debtors[k] ||= { name: h.c.company || 'Client', id: h.c.id, cur: all ? cur : invCur(h), from: invCur(h), total: 0, count: 0, overdue: 0, own: 0 };
-    debtors[k].total = round2(debtors[k].total + v(h)); debtors[k].own = round2(debtors[k].own + num(h.total)); debtors[k].count++;
+    debtors[k].total = round2(debtors[k].total + owedV(h)); debtors[k].own = round2(debtors[k].own + owedOn(h)); debtors[k].count++;
     if (payStatus(h).key === 'overdue') debtors[k].overdue++;
   }
   // The year, per currency, each also in yours (for the split).
   const split = all ? dashCurrencies().map(c => {
-    const iy = inYear.filter(h => invCur(h) === c), py = paidInYear.filter(h => invCur(h) === c);
-    return { cur: c, invoiced: sumBy(iy, h => h.total), paid: sumBy(py, h => h.total), invoicedHome: sumBy(iy, v), paidHome: sumBy(py, v), count: iy.length };
+    const iy = inYear.filter(h => invCur(h) === c), py = pays.filter(p => invCur(p.h) === c && p.on >= yearStart && p.on <= today);
+    return { cur: c, invoiced: sumBy(iy, h => sign(h) * num(h.total)), paid: sumBy(py, p => p.amount),
+      invoicedHome: sumBy(iy, v), paidHome: round2(py.reduce((s, p) => s + payV(p), 0)), count: iy.filter(h => sign(h) > 0).length };
   }).filter(s => s.count || s.paid) : [];
   return {
     view, all, cur, today, year, thisM, lastM, lastY, months, list,
-    invoiced: { thisM: invoicedIn(thisM), lastM: invoicedIn(lastM), lastY: invoicedIn(lastY), year: sumBy(inYear, v), last12: sumBy(list.filter(h => monthKey(h.inv.date) >= months[0]), v) },
-    paid: { thisM: paidIn(thisM), lastM: paidIn(lastM), year: sumBy(paidInYear, v) },
+    invoiced: { thisM: invoicedIn(thisM), lastM: invoicedIn(lastM), lastY: invoicedIn(lastY), year: sumBy(inYear, v), last12: sumBy(docs.filter(h => monthKey(h.inv.date) >= months[0]), v) },
+    paid: { thisM: paidIn(thisM), lastM: paidIn(lastM), year: paidBetween(yearStart, today) },
     count: { thisM: list.filter(h => monthKey(h.inv.date) === thisM).length },
-    owed: { total: sumBy(owed, v), own: all ? null : sumBy(owed, h => h.total), count: owed.length, list: owed },
-    overdue: { total: sumBy(overdue, v), own: all ? null : sumBy(overdue, h => h.total), count: overdue.length, list: overdue },
+    owed: { total: sumBy(owed, owedV), own: all ? null : sumBy(owed, owedOn), count: owed.length, list: owed },
+    overdue: { total: sumBy(overdue, owedV), own: all ? null : sumBy(overdue, owedOn), count: overdue.length, list: overdue },
     series: months.map(m => ({ m, invoiced: invoicedIn(m), paid: paidIn(m) })),
     topClients: Object.values(byClient).sort((a, b) => b.total - a.total),
     debtors: Object.values(debtors).sort((a, b) => b.total - a.total),

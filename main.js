@@ -717,7 +717,7 @@ const readQuiet = name => { try { return JSON.parse(fs.readFileSync(file(name), 
 const now = () => process.env.INVOICER_NOW ? new Date(process.env.INVOICER_NOW) : new Date();
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 // The daily check is needed while any client has a reminder, or any invoice is unpaid (for overdue reminders).
-const remindersOn = () => !!DATA_DIR && ((readQuiet('clients') || []).some(c => c.reminderDay) || (readQuiet('invoices') || []).some(h => h.tracked && !h.paidAt && !(h.inv && h.inv.type === 'quote')));
+const remindersOn = () => !!DATA_DIR && ((readQuiet('clients') || []).some(c => c.reminderDay) || (() => { const all = readQuiet('invoices') || []; return all.some(h => isOpenInvoice(h, all)); })());
 
 function reminderDate(day, y, m) {
   const last = new Date(y, m + 1, 0);
@@ -741,7 +741,7 @@ function reminderOverview(at = now()) {
     if (d > today) return { ...base, status: 'upcoming', date: ymd(d), next: ymd(d) };
     if (skipped[c.id] === ymd(d)) return { ...base, status: 'skipped', date: ymd(d), next: following };
     const since = new Date(d); since.setDate(since.getDate() - 7);
-    const inv = invoices.find(h => h.c && h.c.id === c.id && !(h.inv && h.inv.type === 'quote') && new Date(h.savedAt) >= since);
+    const inv = invoices.find(h => h.c && h.c.id === c.id && isInvoice(h) && new Date(h.savedAt) >= since);
     if (inv) return { ...base, status: 'invoiced', date: ymd(d), next: following, invoice: inv.inv && inv.inv.number };
     return { ...base, status: 'due', date: ymd(d), next: following };
   });
@@ -771,11 +771,21 @@ function notify(r) {
   shown.add(n);
   n.show();
 }
-// Invoices saved since paid tracking began (1.12.0) that are unpaid and past their due date.
-const isOpenInvoice = h => h.tracked && !h.paidAt && !(h.inv && h.inv.type === 'quote');
+// What's still owed on an invoice: its total, less its part payments (1.31.0) and any credit notes
+// for it (the same sums as balanceOf in app/history.js).
+const isInvoice = h => !(h.inv && ['quote', 'credit'].includes(h.inv.type));
+function owedOn(h, all) {
+  if (!isInvoice(h) || h.paidAt || !h.tracked) return 0;
+  const n = v => Number(v) || 0;
+  const credited = all.filter(x => x.inv && x.inv.type === 'credit' && x.inv.creditFor === h.inv.number).reduce((t, x) => t + n(x.total), 0);
+  const paid = (Array.isArray(h.payments) ? h.payments : []).reduce((t, p) => t + n(p.amount), 0);
+  return Math.max(0, Math.round((n(h.total) - credited - paid) * 100) / 100);
+}
+// Invoices saved since paid tracking began (1.12.0) that still have something owed on them.
+const isOpenInvoice = (h, all) => owedOn(h, all) > 0.004;
 function overdueInvoices(at = now()) {
-  const today = ymd(at);
-  return (readQuiet('invoices') || []).filter(h => isOpenInvoice(h) && h.inv.due && h.inv.due < today);
+  const today = ymd(at), all = readQuiet('invoices') || [];
+  return all.filter(h => isOpenInvoice(h, all) && h.inv.due && h.inv.due < today).map(h => ({ ...h, owed: owedOn(h, all) }));
 }
 const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
 // From 9am: each due invoice reminder at most once a day, and each overdue invoice on the first
@@ -791,8 +801,8 @@ function checkReminders() {
   const late = overdueInvoices(at).filter(h => !overdueSeen[h.id] || daysBetween(overdueSeen[h.id], ymd(at)) >= 7);
   late.forEach(h => {
     overdueSeen[h.id] = ymd(at);
-    const amount = `${h.c.currency || ''} ${(Number(h.total) || 0).toFixed(2)}`.trim();
-    notify({ title: `${h.inv.number} is overdue`, body: `${h.c.company || 'A client'} owes ${amount}, due ${h.inv.due}. Click to open History.`, open: 'history' });
+    const amount = `${h.c.currency || ''} ${h.owed.toFixed(2)}`.trim();
+    notify({ title: `${h.inv.number} is overdue`, body: `${h.c.company || 'A client'} owes ${amount}${h.owed < (Number(h.total) || 0) - 0.004 ? ' still' : ''}, due ${h.inv.due}. Click to open History.`, open: 'history' });
   });
   if (!fresh.length && !late.length) return 0;
   writeReminderState({ ...readReminderState(), notified, overdueNotified: overdueSeen });

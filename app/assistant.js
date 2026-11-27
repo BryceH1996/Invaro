@@ -96,7 +96,7 @@ const DATA_INTENTS = [
       const list = realInvoices().filter(h => h.c.id === c.id && isOwedStatus(h));
       if (!list.length) return A(`${esc(c.company)} doesn't owe you anything: every invoice is paid. 🎉`, [goBtn('History', 'history')]);
       const od = list.filter(h => payStatus(h).key === 'overdue');
-      return A(`${esc(c.company)} owes you <b>${M(sumBy(list, h => h.total), c.currency)}</b>${homeNote(sumBy(list, h => h.total), curCode(c.currency))} on ${list.length} invoice${list.length === 1 ? '' : 's'}${od.length ? `, ${od.length} overdue` : ''}:<ul>${list.map(h => `<li>${esc(h.inv.number)}, ${M(h.total, h.c.currency)}, due ${esc(h.inv.due || '–')}${payStatus(h).key === 'overdue' ? ' <span class="status overdue">Overdue</span>' : ''}</li>`).join('')}</ul>`, [goBtn('Open History', 'history')]);
+      return A(`${esc(c.company)} owes you <b>${M(sumBy(list, owedOn), c.currency)}</b>${homeNote(sumBy(list, owedOn), curCode(c.currency))} on ${list.length} invoice${list.length === 1 ? '' : 's'}${od.length ? `, ${od.length} overdue` : ''}:<ul>${list.map(h => `<li>${esc(h.inv.number)}, ${M(owedOn(h), h.c.currency)}${owedOn(h) < num(h.total) ? ` of ${M(h.total, h.c.currency)}` : ''}, due ${esc(h.inv.due || '–')}${payStatus(h).key === 'overdue' ? ' <span class="status overdue">Overdue</span>' : ''}</li>`).join('')}</ul>`, [{ label: 'Statement for them', run: () => openStatement(c.id) }, goBtn('Open History', 'history')]);
     }
     const parts = perCurrency(cur => { const f = moneyFacts(cur); return f.owed.count ? { cur, f } : null; });
     // Older invoices without a paid status aren't counted as owed: say which, never "everything's paid".
@@ -112,7 +112,7 @@ const DATA_INTENTS = [
     if (!figuresAllowed()) return noFigures();
     const list = realInvoices().filter(h => payStatus(h).key === 'overdue');
     if (!list.length) return A('Nothing is overdue. ✓', [goBtn('History', 'history')]);
-    return A(`<b>${list.length} invoice${list.length === 1 ? ' is' : 's are'} overdue:</b><ul>${list.slice(0, 8).map(h => `<li>${esc(h.inv.number)} · ${esc(h.c.company)} · ${M(h.total, h.c.currency)}${homeNote(h.total, invCur(h))}, due ${esc(h.inv.due)}</li>`).join('')}</ul>${list.length > 8 ? `…and ${list.length - 8} more.` : ''} Invaro reminds you about these the day after they're due, then weekly. Mark them paid in History when the money arrives.`,
+    return A(`<b>${list.length} invoice${list.length === 1 ? ' is' : 's are'} overdue:</b><ul>${list.slice(0, 8).map(h => `<li>${esc(h.inv.number)} · ${esc(h.c.company)} · ${M(owedOn(h), h.c.currency)}${owedOn(h) < num(h.total) ? ` still owed of ${M(h.total, h.c.currency)}` : ''}${homeNote(owedOn(h), invCur(h))}, due ${esc(h.inv.due)}</li>`).join('')}</ul>${list.length > 8 ? `…and ${list.length - 8} more.` : ''} Invaro reminds you about these the day after they're due, then weekly. Mark them paid in History when the money arrives.`,
       [goBtn('Open History', 'history')]);
   } },
   { id: 'lowstock', test: q => q.has('low') && (q.has('stock') || q.word('running', 'out')) || q.word('reorder', 'restock'), answer() {
@@ -154,7 +154,8 @@ const DATA_INTENTS = [
     if (!figuresAllowed()) return noFigures();
     const p = findPeriod(q) || { from: todayIso().slice(0, 4) + '-01-01', to: todayIso(), label: `${todayIso().slice(0, 4)} so far` };
     const label = settings.taxLabel || 'VAT';
-    const parts = perCurrency(cur => { const list = realInvoices().filter(h => invCur(h) === cur && inPeriod(h, p)); const t = sumBy(list, h => h.tax); return t ? `${M(t, cur)}` : ''; });
+    // Less the tax on credit notes dated in the period, as on a VAT return.
+    const parts = perCurrency(cur => { const at = h => invCur(h) === cur && inPeriod(h, p); const t = round2(sumBy(realInvoices().filter(at), h => h.tax) - sumBy(creditNotes().filter(at), h => h.tax)); return t ? `${M(t, cur)}` : ''; });
     return A(parts.length ? `${esc(label)} on invoices dated ${esc(p.label)}: <b>${parts.join(' + ')}</b>.` : `No ${esc(label)} on invoices dated ${esc(p.label)}.`, [goBtn('Reports', 'reports')]);
   } },
   // Last: amounts for a period ("how much did I invoice in October?", "how's this month going?").
@@ -167,11 +168,18 @@ const DATA_INTENTS = [
       return A(parts.join('') || 'No invoices yet, so there\'s nothing to compare.', [goBtn('Dashboard', 'dashboard')]);
     }
     const parts = perCurrency(cur => {
-      const list = realInvoices().filter(h => invCur(h) === cur && (byPaid ? inPeriod(h, p, 'paid') : inPeriod(h, p)) && (!ctx.client || h.c.id === ctx.client.id));
-      return list.length ? `<b>${M(sumBy(list, h => h.total), cur)}</b> on ${list.length} invoice${list.length === 1 ? '' : 's'}` : '';
+      const mine = h => invCur(h) === cur && (!ctx.client || h.c.id === ctx.client.id);
+      if (byPaid) { // the payments made in the period, part payments included
+        const pays = realInvoices().filter(mine).flatMap(h => paymentsOf(h).filter(x => x.on >= p.from && x.on <= p.to).map(x => ({ h, amount: num(x.amount) })));
+        const n = new Set(pays.map(x => x.h.id)).size;
+        return pays.length ? `<b>${M(sumBy(pays, x => x.amount), cur)}</b> on ${n} invoice${n === 1 ? '' : 's'}` : '';
+      }
+      // Invoiced, less credit notes dated in the period.
+      const list = realInvoices().filter(h => mine(h) && inPeriod(h, p)), cn = creditNotes().filter(h => mine(h) && inPeriod(h, p));
+      return list.length || cn.length ? `<b>${M(sumBy(list, h => h.total) - sumBy(cn, h => h.total), cur)}</b> on ${list.length} invoice${list.length === 1 ? '' : 's'}${cn.length ? `, after ${cn.length} credit note${cn.length === 1 ? '' : 's'}` : ''}` : '';
     });
     const who = ctx.client ? ` for ${esc(ctx.client.company)}` : '';
-    return A(parts.length ? `${byPaid ? 'Paid to you' : 'Invoiced'}${who} in ${esc(p.label)}: ${parts.join(' and ')}. ${byPaid ? '(By the day each was marked paid.)' : '(By invoice date, including VAT/tax.)'}` : `Nothing ${byPaid ? 'was marked paid' : 'was invoiced'}${who} in ${esc(p.label)}.`,
+    return A(parts.length ? `${byPaid ? 'Paid to you' : 'Invoiced'}${who} in ${esc(p.label)}: ${parts.join(' and ')}. ${byPaid ? '(By the day each payment was made.)' : '(By invoice date, including VAT/tax.)'}` : `Nothing ${byPaid ? 'was paid' : 'was invoiced'}${who} in ${esc(p.label)}.`,
       [goBtn('Reports', 'reports'), goBtn('Dashboard', 'dashboard')]);
   } },
   { id: 'clientinfo', test: (q, ctx) => !!ctx.client && !q.has('howto'), answer(q, ctx) {
@@ -181,10 +189,10 @@ const DATA_INTENTS = [
     const bits = [`<b>${esc(c.company)}</b>: billed in ${esc(curCode(c.currency))}${num(c.dailyRate) ? `, ${M(c.dailyRate, c.currency)}/day` : ''}${num(c.hourlyRate) ? `, ${M(c.hourlyRate, c.currency)}/hour` : ''}, payment terms ${esc(c.dueDays ?? '–')} days.`];
     if (figuresAllowed()) {
       bits.push(`Invoiced in the last 12 months: <b>${M(sumBy(list.filter(h => h.inv.date >= since), h => h.total), c.currency)}</b>.`);
-      bits.push(owed.length ? `They owe you ${M(sumBy(owed, h => h.total), c.currency)} on ${owed.length} invoice${owed.length === 1 ? '' : 's'}.` : 'Nothing outstanding.');
+      bits.push(owed.length ? `They owe you ${M(sumBy(owed, owedOn), c.currency)} on ${owed.length} invoice${owed.length === 1 ? '' : 's'}.` : 'Nothing outstanding.');
     }
     if (last) bits.push(`Last invoice: ${esc(last.inv.number)} on ${esc(last.inv.date)}.`);
-    return A(bits.join(' '), [{ label: 'Invoice them', run: () => invoiceClient(c.id) }, { label: 'Client details', run: () => { editingClient = c.id; go('clients'); } }]);
+    return A(bits.join(' '), [{ label: 'Invoice them', run: () => invoiceClient(c.id) }, ...(figuresAllowed() && owed.length ? [{ label: 'Statement', run: () => openStatement(c.id) }] : []), { label: 'Client details', run: () => { editingClient = c.id; go('clients'); } }]);
   } },
 ];
 
@@ -194,6 +202,10 @@ const HELP = [
   { k: ['quote', 'quotation', 'estimate', 'make', 'create', 'new'], need: ['quote', 'quotation', 'estimate'], t: 'Make a quote', a: 'On <b>New invoice</b>, switch the toggle at the top right from Invoice to <b>Quote</b>. Quotes have their own numbering and a “valid until” date, and don\'t take stock off. Click <b>Save quote</b> when it\'s ready.', go: 'invoice', then: () => $('#doc-type [data-type="quote"]').click() },
   { k: ['convert', 'turn', 'quote', 'into', 'invoice', 'accepted'], need: ['convert', 'turn', 'accepted', 'into'], t: 'Turn a quote into an invoice', a: 'In <b>History</b>, click the quote and choose <b>Make invoice</b>. A new invoice starts with the quote\'s lines; check it and click Save invoice.', go: 'history' },
   { k: ['mark', 'paid', 'payment', 'received', 'unpaid', 'undo', 'invoice'], need: ['mark', 'paid', 'received'], t: 'Mark an invoice paid', a: 'In <b>History</b>, click <b>Mark paid</b> next to the invoice (Undo reverses it). For a quote paid in parts, click <b>Payments</b> and tick each line as it\'s paid.', go: 'history' },
+  { k: ['part', 'partial', 'deposit', 'instalment', 'installment', 'some', 'payment', 'paid', 'invoice'], need: ['part', 'partial', 'deposit', 'instalment', 'installment'], t: 'Record a part payment', a: 'In <b>History</b>, click <b>Payments</b> next to the invoice, type the amount and date, and click <b>Add payment</b>. The invoice shows what’s still owed, and it’s marked paid once the payments cover it.', go: 'history' },
+  { k: ['credit', 'note', 'cancel', 'refund', 'reduce', 'return', 'returned', 'invoice', 'vat'], need: ['credit', 'cancel', 'refund', 'reduce'], t: 'Cancel or reduce an invoice (credit note)', a: 'In <b>History</b>, click the invoice and choose <b>Credit note</b>. It starts as the whole invoice: change or remove lines to credit only part of it, give a reason, and click <b>Save credit note</b>. It comes off what the client owes, and off your sales and VAT in Reports. (Admins only, in a team.)', go: 'history' },
+  { k: ['statement', 'statements', 'account', 'balance', 'owes', 'chase', 'client'], need: ['statement', 'statements', 'chase'], t: 'Send a client a statement', a: 'On <b>Clients</b>, pick the client and, under <b>Statement</b>, choose the dates and click <b>Save statement PDF</b>. It lists their invoices, credit notes and payments with a running balance and what’s overdue. The overdue bars and invoice reminders offer one when a client owes you.', go: 'clients' },
+  { k: ['tax', 'year', 'financial', 'fiscal', 'april', 'march', 'july', 'start', 'starts'], need: ['fiscal', 'financial', 'april', 'july'], also: ['year'], t: 'Change when your tax year starts', a: 'On <b>Reports</b>, choose when your tax year starts (1 March for South Africa, 6 April for UK personal tax, 1 July for Australia, or the 1st of any month for a company year end). The periods change to match.', go: 'reports' },
   { k: ['edit', 'change', 'fix', 'mistake', 'saved', 'correct', 'update', 'invoice', 'quote'], need: ['edit', 'fix', 'mistake', 'correct'], t: 'Change a saved invoice', a: 'In <b>History</b>, click the invoice and choose <b>Edit</b>. Make your changes and click <b>Save changes</b>: it keeps its number, file and paid status, and stock is adjusted by the difference.', go: 'history' },
   { k: ['delete', 'remove', 'invoice', 'history'], need: ['delete', 'remove'], not: ['stock', 'item', 'client', 'logo'], t: 'Remove an invoice', a: 'In <b>History</b>, click it and choose <b>Remove</b>. The PDF file stays in its folder, and any stock it took is put back.', go: 'history' },
   { k: ['folder', 'file', 'pdf', 'find', 'where', 'saved', 'open', 'show', 'invoice'], need: ['folder', 'file', 'pdf', 'find'], t: 'Find an invoice\'s PDF', a: 'In <b>History</b>, click the invoice and choose <b>Show in folder</b> (or <b>Open</b>). PDFs are saved in a folder per client inside your data folder.', go: 'history' },
@@ -220,7 +232,7 @@ const HELP = [
   { k: ['team', 'partner', 'share', 'invite', 'member', 'accountant', 'colleague', 'staff'], need: ['team', 'partner', 'invite', 'member', 'accountant', 'colleague', 'staff'], t: 'Work as a team', a: 'On <b>My details</b>, sign in with Google, create a team and invite people by email as an admin, accountant or team member. The roles table there shows what each can do.', go: 'me' },
   { k: ['sign', 'login', 'account', 'sync', 'computer', 'computers', 'laptop'], need: ['sign', 'login', 'sync', 'computers', 'laptop'], t: 'Use Invaro on more than one computer', a: 'On <b>My details</b>, under <b>Account &amp; sync</b>, click <b>Sign in with Google</b> on each computer. Your clients, stock, settings and invoice history sync; PDF files stay on each computer.', go: 'me' },
   { k: ['report', 'reports', 'export', 'accountant', 'spreadsheet', 'year', 'csv'], need: ['report', 'reports', 'export'], not: ['stock'], t: 'Reports', a: 'On <b>Reports</b>, pick a tax year or calendar year to see what you invoiced, were paid, are owed and charged in VAT, by client and by month. <b>Export to spreadsheet (CSV)</b> gives your accountant the list.', go: 'reports' },
-  { k: ['rand', 'zar', 'exchange', 'convert', 'currency', 'rate', 'rates', 'pounds', 'dollars', 'euros'], need: ['rand', 'zar', 'exchange'], t: 'Totals in rand', a: 'On <b>Reports</b>, tick <b>Also show what\'s been paid in rand</b> and pick your bank. Invoices in other currencies get their rand value at that bank\'s buying rate on the day you marked them paid.', go: 'reports' },
+  { k: ['rand', 'zar', 'exchange', 'convert', 'currency', 'rate', 'rates', 'pounds', 'dollars', 'euros'], need: ['rand', 'zar', 'exchange'], t: 'Totals in rand', a: 'On <b>Reports</b>, tick <b>Also show what\'s been paid in rand</b> and pick your bank. What\'s been paid in other currencies gets its rand value at that bank\'s buying rate on the day each payment was made, part payments included.', go: 'reports' },
   { k: ['dashboard', 'analysis', 'chart', 'graph', 'trend', 'overview', 'insights'], need: ['dashboard', 'analysis', 'chart', 'graph', 'overview', 'insights'], t: 'The Dashboard', a: 'The <b>Dashboard</b> shows this month against last month and last year, the last 12 months as a chart, who owes you, top clients and best-selling stock.', go: 'dashboard' },
   { k: ['email', 'send', 'mail', 'whatsapp', 'invoice', 'quote'], need: ['email', 'send', 'mail', 'whatsapp'], t: 'Send an invoice', a: 'Invaro saves the PDF; it doesn\'t send email itself. After saving, click the invoice in <b>History</b> and choose <b>Show in folder</b>, then attach the PDF to your email.', go: 'history' },
   { k: ['data', 'folder', 'move', 'location', 'json'], need: ['data'], t: 'Where your data is kept', a: 'Your clients, stock, settings and history are JSON files in your data folder. See <b>My details → Data</b> to open it or move it (e.g. into OneDrive).', go: 'me' },

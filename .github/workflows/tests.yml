@@ -1,0 +1,30 @@
+# Runs the tests (test/: totals, numbering, stock, the Dashboard and imports) on every push and pull request.
+# They load the app's own scripts in Node, so there's nothing to build and no Electron to start.
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The tests use jsPDF (the preview and saving build real PDFs), but not Electron itself.
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
+      - run: npm test

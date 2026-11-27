@@ -1,5 +1,5 @@
 // Releases a new version of Invaro:
-//   1. checks this version hasn't been released already (git tag v<version>)
+//   1. checks this version hasn't been released already (git tag v<version>), and runs the tests
 //   2. builds the installer (electron-builder)
 //   3. publishes it to <data folder>/updates so installed copies offer the update
 //   4. commits any changes, tags v<version> and pushes both to GitHub: the private repo
@@ -53,6 +53,11 @@ function releaseLocally() {
   if (git(`tag --list ${tag}`)) fail(`${tag} has already been released. Bump "version" in package.json first.`);
   const branch = git('rev-parse --abbrev-ref HEAD');
   if (branch !== 'main') fail(`Releases are made from the main branch (you're on "${branch}").`);
+
+  // ---- tests: totals, numbering, stock, the Dashboard and imports (test/) ----
+  console.log('Running the tests…');
+  const t = spawnSync('npm', ['test', '--silent'], { cwd: root, stdio: 'inherit', shell: true });
+  if (t.status !== 0) fail('Tests failed. Nothing was built, published or pushed.');
 
   // ---- 2. build ----
   // The Google Drive OAuth client is kept out of git (see SYNC.md); without it, Connect Google Drive is hidden.

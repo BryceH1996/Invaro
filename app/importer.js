@@ -159,21 +159,27 @@ const cellOf = (row, cols, field) => { for (const i of cols[field] || []) { cons
 // Dates as yyyy-mm-dd from "2025-03-14", "14/03/2025", "03/14/2025", "14 Mar 2025", "Mar 14, 2025"…
 const MON = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 let dayFirst = true; // set per file from dates that can only be read one way
+// yyyy-mm-dd, or '' for a day that doesn't exist (31 February, 31 April, 29 February outside a leap year).
+function realDate(y, mo, d) {
+  if (y < 100) y += 2000;
+  const t = new Date(y, mo - 1, d);
+  return mo >= 1 && mo <= 12 && d >= 1 && t.getFullYear() === y && t.getMonth() === mo - 1 && t.getDate() === d ? `${y}-${pad(mo)}-${pad(d)}` : '';
+}
 function parseAnyDate(s) {
   s = String(s || '').trim(); if (!s) return '';
   let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (m) return `${m[1]}-${pad(+m[2])}-${pad(+m[3])}`;
+  if (m) return realDate(+m[1], +m[2], +m[3]);
   m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})/);
   if (m) {
-    let [a, b, y] = [+m[1], +m[2], +m[3]]; if (y < 100) y += 2000;
+    const [a, b, y] = [+m[1], +m[2], +m[3]];
     let d = dayFirst ? a : b, mo = dayFirst ? b : a;
     if (mo > 12 && d <= 12) [d, mo] = [mo, d];
-    return mo >= 1 && mo <= 12 && d >= 1 && d <= 31 ? `${y}-${pad(mo)}-${pad(d)}` : '';
+    return realDate(y, mo, d);
   }
   m = s.match(/^(\d{1,2})(?:st|nd|rd|th)?[\s\-]+([a-z]{3})[a-z]*\.?[\s\-,]+(\d{2,4})/i);
-  if (m && MON.includes(m[2].toLowerCase())) { let y = +m[3]; if (y < 100) y += 2000; return `${y}-${pad(MON.indexOf(m[2].toLowerCase()) + 1)}-${pad(+m[1])}`; }
+  if (m && MON.includes(m[2].toLowerCase())) return realDate(+m[3], MON.indexOf(m[2].toLowerCase()) + 1, +m[1]);
   m = s.match(/^([a-z]{3})[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})/i);
-  if (m && MON.includes(m[1].toLowerCase())) return `${m[3]}-${pad(MON.indexOf(m[1].toLowerCase()) + 1)}-${pad(+m[2])}`;
+  if (m && MON.includes(m[1].toLowerCase())) return realDate(+m[3], MON.indexOf(m[1].toLowerCase()) + 1, +m[2]);
   return '';
 }
 // "14/03/2025" says day first; "03/14/2025" says month first. Most South African and UK exports are day first.
@@ -321,6 +327,8 @@ function applyInvoices(plan, source) {
       id: uid(), savedAt: p.date + 'T12:00:00.000Z', pageSize: settings.pageSize, inv, c, me: clone(settings.me || {}), lines: docLines(inv, c),
       design: clone(designNow()), taxLabel: settings.taxLabel || 'VAT', bank: clone(settings.bank || {}),
       total: p.total, subtotal: p.subtotal, tax: p.tax, tracked: true, paidAt: p.paidAt, imported: { from: source, at: new Date().toISOString() },
+      // Partly paid in the old app: that much comes in as a part payment (dated the invoice, as the file has no date for it).
+      ...(p.partly ? { payments: [{ amount: p.partly, on: p.date, note: `Paid before moving to Invaro (${source})` }] } : {}),
     };
     invoices.push(entry); n++;
   }

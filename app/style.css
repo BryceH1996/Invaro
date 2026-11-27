@@ -141,6 +141,20 @@ td.num, th.num { text-align:right; white-space:nowrap; }
 .steps .step-date { text-align:right; }
 .steps-sum { display:flex; align-items:center; justify-content:space-between; gap:12px; padding-top:8px; font-size:13px; }
 .steps p.muted { margin:4px 0 0; }
+/* Part payments and credit notes on an invoice (History), and the form to add a payment */
+.steps .step.pay { grid-template-columns:22px 1fr auto 118px; cursor:default; }
+.steps .step.pay .link.warn { margin-left:4px; }
+.pay-form { display:grid; grid-template-columns:110px 140px 1fr auto; gap:8px; padding-top:10px; }
+.pay-form input { padding:5px 8px; }
+@media (max-width: 700px) { .pay-form { grid-template-columns:1fr 1fr; } }
+.status.credit { background:transparent; border-color:var(--slate); color:var(--slate); }
+.status.credited { background:var(--ok-bg); color:var(--ok-fg); }
+/* A credit note being made (New invoice) */
+.edit-bar.credit-bar { background:var(--mist); color:var(--ink); border:1px solid var(--border); }
+#credit-reason-row { margin:2px 0 8px; }
+/* The Statement box on Clients */
+.statement-box { margin-top:18px; padding-top:4px; border-top:1px solid var(--border); }
+.statement-box #cl-owes { margin:2px 0 8px; }
 td .btn { padding:4px 10px; }
 .muted { color:var(--slate); font-size:12px; }
 .drive-status { margin:0 0 6px; padding:8px 10px; border-radius:6px; background:var(--mist); font-size:13px; }
@@ -312,6 +326,8 @@ table.stock th.pic, table.stock td.pic { width:48px; padding-right:0; }
 /* Reports */
 .rep-tools { display:flex; gap:8px; align-items:center; }
 .rep-tools select { width:auto; }
+.rep-tools { flex-wrap:wrap; justify-content:flex-end; }
+.rep-tools .rep-ty { font-size:12px; color:var(--slate); margin:0 0 0 6px; white-space:nowrap; }
 .rep-tools .btn { padding:7px 12px; white-space:nowrap; }
 .rep-rand summary { cursor:pointer; font-weight:700; font-size:13px; }
 .rep-rand[open] summary { margin-bottom:4px; }

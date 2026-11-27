@@ -36,7 +36,7 @@
 
     <!-- DASHBOARD -->
     <section data-tab="dashboard">
-      <div class="title-row"><h2>Dashboard <button type="button" class="info" aria-label="About these figures" aria-expanded="false">i</button><span class="tip" hidden>Invoiced goes by each invoice's date, paid by the day you marked it paid. Quotes aren't counted.</span></h2><select id="dash-cur" title="Currency"></select></div>
+      <div class="title-row"><h2>Dashboard <button type="button" class="info" aria-label="About these figures" aria-expanded="false">i</button><span class="tip" hidden>Invoiced goes by each invoice's date, less credit notes on theirs. Paid goes by the day each payment was made, part payments included. Quotes aren't counted.</span></h2><select id="dash-cur" title="Currency"></select></div>
       <p class="muted" id="dash-sub"></p>
       <div class="tiles" id="dash-tiles"></div>
       <div class="card">
@@ -65,6 +65,11 @@
         <span>Saving replaces <b id="edit-what"></b> in History, with the same number and file. Its paid status is kept.</span>
         <button class="btn" id="edit-cancel" title="Leave it as it was and go back to what you were working on">Cancel editing</button>
       </div>
+      <div class="edit-bar credit-bar" id="credit-bar" hidden>
+        <span>A credit note for <b id="credit-for"></b> (<span id="credit-left"></span>). It starts as the whole invoice: change or remove lines to credit only part of it. Saving takes it off what's owed.</span>
+        <button class="btn" id="credit-cancel" title="Go back to what you were working on">Cancel</button>
+      </div>
+      <div id="credit-reason-row" hidden><label for="inv-reason">Reason (shown on the credit note)</label><input id="inv-reason" placeholder="e.g. Cancelled order, returned goods, overcharged hours"></div>
       <label>Client</label>
       <select id="inv-client"></select>
       <p class="muted rates" id="inv-rates"></p>
@@ -75,7 +80,7 @@
       </div>
       <div class="row">
         <div><label id="lbl-date">Invoice date</label><input id="inv-date" type="date"></div>
-        <div><label id="lbl-due">Due date</label><input id="inv-due" type="date"></div>
+        <div id="due-cell"><label id="lbl-due">Due date</label><input id="inv-due" type="date"></div>
       </div>
       <h3>Line items <button type="button" class="info" aria-label="About line items" aria-expanded="false">i</button><span class="tip" hidden>Hours, days and days off are priced from the client's rates. Lines that come to zero are left off the PDF.</span></h3>
       <label class="check" title="Untick to leave the hourly, daily and unit rates off the PDF, showing only quantities and amounts"><input type="checkbox" id="inv-show-rates"> Show rates on the PDF</label>
@@ -286,6 +291,18 @@
         <div class="actions">
           <button class="btn" id="cl-invoice">Invoice this client</button>
           <button class="btn danger" id="cl-delete">Delete client</button>
+        </div>
+        <div class="statement-box" id="cl-statement">
+          <h3>Statement <button type="button" class="info" aria-label="About statements" aria-expanded="false">i</button><span class="tip" hidden>A statement lists this client's invoices, credit notes and payments with a running balance, what they owe now and how overdue it is, with your banking details. Send it with a reminder when they're behind. Invoices saved before version 1.12.0 aren't on it until you mark them paid or unpaid in History.</span></h3>
+          <p class="muted" id="cl-owes"></p>
+          <div class="row">
+            <div><label for="st-from">From</label><input id="st-from" type="date" title="Everything before this date is one line: the balance brought forward"></div>
+            <div><label for="st-to">To</label><input id="st-to" type="date"></div>
+          </div>
+          <div class="actions">
+            <button class="btn" id="st-show">Show statement</button>
+            <button class="btn primary" id="st-save" title="Saves the statement as a PDF in this client's folder">Save statement PDF</button>
+          </div>
         </div>
       </div>
     </section>
@@ -523,12 +540,12 @@
 
     <!-- REPORTS -->
     <section data-tab="reports">
-      <div class="title-row"><h2>Reports <button type="button" class="info" aria-label="About these figures" aria-expanded="false">i</button><span class="tip" hidden>Totals include VAT. Quotes aren't counted. Rand values use each invoice's own rate, so they don't change as the rand moves. Invoices saved before version 1.12.0 count as paid or outstanding only once you mark them in History.</span></h2><div class="rep-tools"><select id="rep-period" title="Period"></select><button class="btn" id="rep-csv">Export to spreadsheet (CSV)</button></div></div>
+      <div class="title-row"><h2>Reports <button type="button" class="info" aria-label="About these figures" aria-expanded="false">i</button><span class="tip" hidden>Totals include VAT. Credit notes count as negative amounts in the period of their own date, VAT included. Paid is everything paid on the period's invoices so far, part payments included. Quotes aren't counted. Rand values use each payment's own rate (the day it was made), so they don't change as the rand moves. Invoices saved before version 1.12.0 count as paid or outstanding only once you mark them in History.</span></h2><div class="rep-tools"><select id="rep-period" title="Period"></select><label class="rep-ty" for="rep-ty-start">Tax year starts</label><select id="rep-ty-start" title="When your tax year starts. For your company's own year end, choose the 1st of the month after it."></select><button class="btn" id="rep-csv">Export to spreadsheet (CSV)</button></div></div>
       <p class="muted" id="rep-range"></p>
       <details class="card rep-rand" id="rep-rand">
         <summary>Totals in rand (ZAR)</summary>
         <label class="check" title="Paid invoices in another currency are converted at your bank's buying rate (the rand the bank pays for the foreign currency) on the day they're marked paid"><input type="checkbox" id="rep-zar"> Also show what's been paid in rand (ZAR), at a bank's buying rate on the day each invoice was paid</label>
-        <div class="rep-bank" id="rep-bank-row" hidden><label for="rep-bank">Bank</label><select id="rep-bank"><option value="standard">Standard Bank (T/T buying rate)</option><option value="absa">Absa (transfer buying rate)</option><option value="nedbank">Nedbank (cheque &amp; transfer buying rate)</option></select><span><button type="button" class="info" aria-label="About the banks" aria-expanded="false">i</button><span class="tip" hidden>Marking an invoice paid records every bank's rate that day. Standard Bank also has rates for past dates; Absa and Nedbank only publish today's, so an invoice marked paid earlier uses Standard Bank's. FNB, Capitec and Investec don't publish rates Invaro can read.</span></span></div>
+        <div class="rep-bank" id="rep-bank-row" hidden><label for="rep-bank">Bank</label><select id="rep-bank"><option value="standard">Standard Bank (T/T buying rate)</option><option value="absa">Absa (transfer buying rate)</option><option value="nedbank">Nedbank (cheque &amp; transfer buying rate)</option></select><span><button type="button" class="info" aria-label="About the banks" aria-expanded="false">i</button><span class="tip" hidden>Recording a payment (or marking an invoice paid) records every bank's rate that day, for that payment. Standard Bank also has rates for past dates; Absa and Nedbank only publish today's, so an invoice marked paid earlier uses Standard Bank's. FNB, Capitec and Investec don't publish rates Invaro can read.</span></span></div>
       </details>
       <p class="drive-status" id="rep-fx" hidden></p>
       <div id="rep-body"></div>
@@ -580,6 +597,12 @@
 <script src="tips.js"></script>
 <script src="pdf.js"></script>
 <script src="renderer.js"></script>
+<script src="editor.js"></script>
+<script src="clients.js"></script>
+<script src="history.js"></script>
+<script src="statements.js"></script>
+<script src="reports.js"></script>
+<script src="account.js"></script>
 <script src="stock.js"></script>
 <script src="dashboard.js"></script>
 <script src="assistant.js"></script>
